@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2021 DiffPlug
+ * Copyright 2016-2025 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,19 +17,20 @@ package com.diffplug.spotless;
 
 import java.io.File;
 import java.io.Serializable;
+import java.util.List;
 import java.util.Objects;
 
 import javax.annotation.Nullable;
 
 /**
  * An implementation of this class specifies a single step in a formatting process.
- *
+ * <p>
  * The input is guaranteed to have unix-style newlines, and the output is required
  * to not introduce any windows-style newlines as well.
  */
-public interface FormatterStep extends Serializable {
+public interface FormatterStep extends Serializable, AutoCloseable {
 	/** The name of the step, for debugging purposes. */
-	public String getName();
+	String getName();
 
 	/**
 	 * Returns a formatted version of the given content.
@@ -37,56 +38,98 @@ public interface FormatterStep extends Serializable {
 	 * @param rawUnix
 	 *            the content to format, guaranteed to have unix-style newlines ('\n'); never null
 	 * @param file
-	 *            the file which {@code rawUnix} was obtained from; never null. Pass an empty file using
-	 *            {@code new File("")} if and only if no file is actually associated with {@code rawUnix}
+	 *            the file which {@code rawUnix} was obtained from; never null. Pass the reference
+	 *            {@link Formatter#NO_FILE_SENTINEL} if and only if no file is actually associated with {@code rawUnix}
 	 * @return the formatted content, guaranteed to only have unix-style newlines; may return null
 	 *         if the formatter step doesn't have any changes to make
 	 * @throws Exception if the formatter step experiences a problem
 	 */
-	public @Nullable String format(String rawUnix, File file) throws Exception;
+	@Nullable
+	String format(String rawUnix, File file) throws Exception;
 
 	/**
-	 * Returns a new FormatterStep which will only apply its changes
-	 * to files which pass the given filter.
+	 * Returns a list of lints against the given file content
 	 *
+	 * @param content
+	 *            the content to check
+	 * @param file
+	 *            the file which {@code content} was obtained from; never null. Pass an empty file using
+	 *            {@code new File("")} if and only if no file is actually associated with {@code content}
+	 * @return a list of lints
+	 * @throws Exception if the formatter step experiences a problem
+	 */
+	@Nullable
+	default List<Lint> lint(String content, File file) throws Exception {
+		return List.of();
+	}
+
+	/**
+	 * Returns a new {@code FormatterStep} which, observing the value of {@code formatIfMatches},
+	 * will only apply, or not, its changes to files which pass the given filter.
+	 *
+	 * @param onMatch
+	 *            determines if matches are included or excluded
 	 * @param contentPattern
-	 *            java regular expression used to filter out files which content doesn't contain pattern
+	 *            java regular expression used to filter in or out files which content contain pattern
 	 * @return FormatterStep
 	 */
-	public default FormatterStep filterByContentPattern(String contentPattern) {
-		return new FilterByContentPatternFormatterStep(this, contentPattern);
+	default FormatterStep filterByContent(OnMatch onMatch, String contentPattern) {
+		return new FilterByContentPatternFormatterStep(this, onMatch, contentPattern);
 	}
 
 	/**
 	 * Returns a new FormatterStep which will only apply its changes
 	 * to files which pass the given filter.
-	 *
+	 * <p>
 	 * The provided filter must be serializable.
 	 */
-	public default FormatterStep filterByFile(SerializableFileFilter filter) {
+	default FormatterStep filterByFile(SerializableFileFilter filter) {
 		return new FilterByFileFormatterStep(this, filter);
 	}
 
 	/**
-	 * Implements a FormatterStep in a strict way which guarantees correct and lazy implementation
-	 * of up-to-date checks.  This maximizes performance for cases where the FormatterStep is not
-	 * actually needed (e.g. don't load eclipse setting file unless this step is actually running)
-	 * while also ensuring that gradle can detect changes in a step's settings to determine that
-	 * it needs to rerun a format.
+	 * @param name
+	 *             The name of the formatter step.
+	 * @param roundtripInit
+	 *             If the step has any state, this supplier will calculate it lazily. The supplier doesn't
+	 *             have to be serializable, but the result it calculates needs to be serializable.
+	 * @param equalityFunc
+	 * 		       A pure serializable function (method reference recommended) which takes the result of `roundtripInit`,
+	 * 		       and returns a serializable object whose serialized representation will be used for `.equals` and
+	 * 		       `.hashCode` of the FormatterStep.
+	 * @param formatterFunc
+	 * 		       A pure serializable function (method reference recommended) which takes the result of `equalityFunc`,
+	 * 		       and returns a `FormatterFunc` which will be used for the actual formatting.
+	 * @return A FormatterStep which can be losslessly roundtripped through the java serialization machinery.
 	 */
-	abstract class Strict<State extends Serializable> extends LazyForwardingEquality<State> implements FormatterStep {
-		private static final long serialVersionUID = 1L;
+	static <RoundtripState extends Serializable, EqualityState extends Serializable> FormatterStep createLazy(
+			String name,
+			ThrowingEx.Supplier<RoundtripState> roundtripInit,
+			SerializedFunction<RoundtripState, EqualityState> equalityFunc,
+			SerializedFunction<EqualityState, ? extends FormatterFunc> formatterFunc) {
+		return new FormatterStepSerializationRoundtrip<>(name, roundtripInit, equalityFunc, formatterFunc);
+	}
 
-		/**
-		 * Implements the formatting function strictly in terms
-		 * of the input data and the result of {@link #calculateState()}.
-		 */
-		protected abstract String format(State state, String rawUnix, File file) throws Exception;
-
-		@Override
-		public final String format(String rawUnix, File file) throws Exception {
-			return format(state(), rawUnix, file);
-		}
+	/**
+	 * @param name
+	 *             The name of the formatter step.
+	 * @param roundTrip
+	 *             The roundtrip serializable state of the step.
+	 * @param equalityFunc
+	 * 		       A pure serializable function (method reference recommended) which takes the result of `roundTrip`,
+	 * 		       and returns a serializable object whose serialized representation will be used for `.equals` and
+	 * 		       `.hashCode` of the FormatterStep.
+	 * @param formatterFunc
+	 * 		       A pure serializable function (method reference recommended) which takes the result of `equalityFunc`,
+	 * 		       and returns a `FormatterFunc` which will be used for the actual formatting.
+	 * @return A FormatterStep which can be losslessly roundtripped through the java serialization machinery.
+	 */
+	static <RoundtripState extends Serializable, EqualityState extends Serializable> FormatterStep create(
+			String name,
+			RoundtripState roundTrip,
+			SerializedFunction<RoundtripState, EqualityState> equalityFunc,
+			SerializedFunction<EqualityState, ? extends FormatterFunc> formatterFunc) {
+		return createLazy(name, () -> roundTrip, equalityFunc, formatterFunc);
 	}
 
 	/**
@@ -100,11 +143,11 @@ public interface FormatterStep extends Serializable {
 	 *             only the state supplied by state and nowhere else.
 	 * @return A FormatterStep
 	 */
-	public static <State extends Serializable> FormatterStep createLazy(
+	static <State extends Serializable> FormatterStep createLazy(
 			String name,
 			ThrowingEx.Supplier<State> stateSupplier,
-			ThrowingEx.Function<State, FormatterFunc> stateToFormatter) {
-		return new FormatterStepImpl.Standard<>(name, stateSupplier, stateToFormatter);
+			SerializedFunction<State, FormatterFunc> stateToFormatter) {
+		return createLazy(name, stateSupplier, SerializedFunction.identity(), stateToFormatter);
 	}
 
 	/**
@@ -117,41 +160,11 @@ public interface FormatterStep extends Serializable {
 	 *             only the state supplied by state and nowhere else.
 	 * @return A FormatterStep
 	 */
-	public static <State extends Serializable> FormatterStep create(
+	static <State extends Serializable> FormatterStep create(
 			String name,
 			State state,
-			ThrowingEx.Function<State, FormatterFunc> stateToFormatter) {
+			SerializedFunction<State, FormatterFunc> stateToFormatter) {
 		Objects.requireNonNull(state, "state");
 		return createLazy(name, () -> state, stateToFormatter);
-	}
-
-	/**
-	 * @param name
-	 *             The name of the formatter step
-	 * @param functionSupplier
-	 *             A supplier which will lazily generate the function
-	 *             used by the formatter step
-	 * @return A FormatterStep which will never report that it is up-to-date, because
-	 *         it is not equal to the serialized representation of itself.
-	 */
-	public static FormatterStep createNeverUpToDateLazy(
-			String name,
-			ThrowingEx.Supplier<FormatterFunc> functionSupplier) {
-		return new FormatterStepImpl.NeverUpToDate(name, functionSupplier);
-	}
-
-	/**
-	 * @param name
-	 *             The name of the formatter step
-	 * @param function
-	 *             The function used by the formatter step
-	 * @return A FormatterStep which will never report that it is up-to-date, because
-	 *         it is not equal to the serialized representation of itself.
-	 */
-	public static FormatterStep createNeverUpToDate(
-			String name,
-			FormatterFunc function) {
-		Objects.requireNonNull(function, "function");
-		return createNeverUpToDateLazy(name, () -> function);
 	}
 }

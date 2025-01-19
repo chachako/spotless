@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,17 +31,25 @@ import java.util.regex.Pattern;
 
 import javax.annotation.Nullable;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.diffplug.spotless.FileSignature;
 import com.diffplug.spotless.FormatterFunc;
 import com.diffplug.spotless.FormatterStep;
 import com.diffplug.spotless.LineEnding;
+import com.diffplug.spotless.OnMatch;
 import com.diffplug.spotless.SerializableFileFilter;
+import com.diffplug.spotless.SerializedFunction;
 import com.diffplug.spotless.ThrowingEx;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** Prefixes a license header before the package statement. */
 public final class LicenseHeaderStep {
+	public static final String DEFAULT_JAVA_HEADER_DELIMITER = "(package|import|public|class|module) ";
+	private static final Logger LOGGER = LoggerFactory.getLogger(LicenseHeaderStep.class);
+
 	public enum YearMode {
 		PRESERVE, UPDATE_TO_TODAY, SET_FROM_GIT
 	}
@@ -112,15 +120,22 @@ public final class LicenseHeaderStep {
 		return new LicenseHeaderStep(name, contentPattern, headerLazy, delimiter, yearSeparator, yearMode, skipLinesMatching);
 	}
 
-	public FormatterStep build() {
-		FormatterStep formatterStep = null;
+	private static class SetLicenseHeaderYearsFromGitHistory implements SerializedFunction<Runtime, FormatterFunc> {
+		private static final long serialVersionUID = 1L;
 
+		@Override
+		public FormatterFunc apply(Runtime input) throws Exception {
+			return FormatterFunc.needsFile(input::setLicenseHeaderYearsFromGitHistory);
+		}
+	}
+
+	public FormatterStep build() {
+		FormatterStep formatterStep;
 		if (yearMode.get() == YearMode.SET_FROM_GIT) {
-			formatterStep = FormatterStep.createNeverUpToDateLazy(name, () -> {
+			formatterStep = FormatterStep.createLazy(name, () -> {
 				boolean updateYear = false; // doesn't matter
-				Runtime runtime = new Runtime(headerLazy.get(), delimiter, yearSeparator, updateYear, skipLinesMatching);
-				return FormatterFunc.needsFile(runtime::setLicenseHeaderYearsFromGitHistory);
-			});
+				return new Runtime(headerLazy.get(), delimiter, yearSeparator, updateYear, skipLinesMatching);
+			}, new SetLicenseHeaderYearsFromGitHistory());
 		} else {
 			formatterStep = FormatterStep.createLazy(name, () -> {
 				// by default, we should update the year if the user is using ratchetFrom
@@ -137,14 +152,12 @@ public final class LicenseHeaderStep {
 					throw new IllegalStateException(yearMode.toString());
 				}
 				return new Runtime(headerLazy.get(), delimiter, yearSeparator, updateYear, skipLinesMatching);
-			}, step -> step::format);
+			}, step -> FormatterFunc.needsFile(step::format));
 		}
-
 		if (contentPattern == null) {
 			return formatterStep;
 		}
-
-		return formatterStep.filterByContentPattern(contentPattern);
+		return formatterStep.filterByContent(OnMatch.INCLUDE, contentPattern);
 	}
 
 	private String sanitizeName(@Nullable String name) {
@@ -208,6 +221,9 @@ public final class LicenseHeaderStep {
 		private final @Nullable String afterYear;
 		private final boolean updateYearWithLatest;
 		private final boolean licenseHeaderWithRange;
+		private final boolean hasFileToken;
+
+		private static final Pattern FILENAME_PATTERN = Pattern.compile("\\$FILE");
 
 		/** The license that we'd like enforced. */
 		private Runtime(String licenseHeader, String delimiter, String yearSeparator, boolean updateYearWithLatest, @Nullable String skipLinesMatching) {
@@ -221,6 +237,7 @@ public final class LicenseHeaderStep {
 			}
 			this.delimiterPattern = Pattern.compile('^' + delimiter, Pattern.UNIX_LINES | Pattern.MULTILINE);
 			this.skipLinesMatching = skipLinesMatching == null ? null : Pattern.compile(skipLinesMatching);
+			this.hasFileToken = FILENAME_PATTERN.matcher(licenseHeader).find();
 
 			Optional<String> yearToken = getYearToken(licenseHeader);
 			if (yearToken.isPresent()) {
@@ -261,9 +278,9 @@ public final class LicenseHeaderStep {
 		}
 
 		/** Formats the given string. */
-		private String format(String raw) {
+		private String format(String raw, File file) {
 			if (skipLinesMatching == null) {
-				return addOrUpdateLicenseHeader(raw);
+				return addOrUpdateLicenseHeader(raw, file);
 			} else {
 				String[] lines = raw.split("\n");
 				StringBuilder skippedLinesBuilder = new StringBuilder();
@@ -282,11 +299,17 @@ public final class LicenseHeaderStep {
 						remainingLinesBuilder.append(line).append('\n');
 					}
 				}
-				return skippedLinesBuilder + addOrUpdateLicenseHeader(remainingLinesBuilder.toString());
+				return skippedLinesBuilder + addOrUpdateLicenseHeader(remainingLinesBuilder.toString(), file);
 			}
 		}
 
-		private String addOrUpdateLicenseHeader(String raw) {
+		private String addOrUpdateLicenseHeader(String raw, File file) {
+			raw = replaceYear(raw);
+			raw = replaceFileName(raw, file);
+			return raw;
+		}
+
+		private String replaceYear(String raw) {
 			Matcher contentMatcher = delimiterPattern.matcher(raw);
 			if (!contentMatcher.find()) {
 				throw new IllegalArgumentException("Unable to find delimiter regex " + delimiterPattern);
@@ -381,7 +404,7 @@ public final class LicenseHeaderStep {
 					}
 				}
 			} else {
-				System.err.println("Can't parse copyright year '" + content + "', defaulting to " + yearToday);
+				LOGGER.warn("Can't parse copyright year '{}', defaulting to {}", content, yearToday);
 				// couldn't recognize the year format
 				return yearToday;
 			}
@@ -414,6 +437,19 @@ public final class LicenseHeaderStep {
 				yearRange = oldYear + yearSepOrFull + newYear;
 			}
 			return beforeYear + yearRange + afterYear + raw.substring(contentMatcher.start());
+		}
+
+		private String replaceFileName(String raw, File file) {
+			if (!hasFileToken) {
+				return raw;
+			}
+			Matcher contentMatcher = delimiterPattern.matcher(raw);
+			if (!contentMatcher.find()) {
+				throw new IllegalArgumentException("Unable to find delimiter regex " + delimiterPattern);
+			}
+			String header = raw.substring(0, contentMatcher.start());
+			String content = raw.substring(contentMatcher.start());
+			return FILENAME_PATTERN.matcher(header).replaceAll(file.getName()) + content;
 		}
 
 		private static String parseYear(String cmd, File file) throws IOException {

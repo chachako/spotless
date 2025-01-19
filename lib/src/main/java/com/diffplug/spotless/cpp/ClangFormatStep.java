@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 DiffPlug
+ * Copyright 2020-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,10 +64,10 @@ public class ClangFormatStep {
 	}
 
 	public FormatterStep create() {
-		return FormatterStep.createLazy(name(), this::createState, State::toFunc);
+		return FormatterStep.createLazy(name(), this::createRoundtrip, RoundtripState::toEquality, EqualityState::toFunc);
 	}
 
-	private State createState() throws IOException, InterruptedException {
+	private RoundtripState createRoundtrip() throws IOException, InterruptedException {
 		String howToInstall = "" +
 				"You can download clang-format from https://releases.llvm.org and " +
 				"then point Spotless to it with {@code pathToExe('/path/to/clang-format')} " +
@@ -82,11 +82,29 @@ public class ClangFormatStep {
 				.fixWrongVersion(
 						"You can tell Spotless to use the version you already have with {@code clangFormat('{versionFound}')}" +
 								"or you can download the currently specified version, {version}.\n" + howToInstall);
-		return new State(this, exe);
+		return new RoundtripState(this, exe);
+	}
+
+	static class RoundtripState implements Serializable {
+		private static final long serialVersionUID = 1L;
+
+		final String version;
+		final @Nullable String style;
+		final ForeignExe exe;
+
+		RoundtripState(ClangFormatStep step, ForeignExe exe) {
+			this.version = step.version;
+			this.style = step.style;
+			this.exe = exe;
+		}
+
+		private EqualityState toEquality() {
+			return new EqualityState(version, style, exe);
+		}
 	}
 
 	@SuppressFBWarnings("SE_TRANSIENT_FIELD_NOT_RESTORED")
-	static class State implements Serializable {
+	static class EqualityState implements Serializable {
 		private static final long serialVersionUID = -1825662356883926318L;
 		// used for up-to-date checks and caching
 		final String version;
@@ -95,9 +113,9 @@ public class ClangFormatStep {
 		// used for executing
 		private transient @Nullable List<String> args;
 
-		State(ClangFormatStep step, ForeignExe pathToExe) {
-			this.version = step.version;
-			this.style = step.style;
+		EqualityState(String version, @Nullable String style, ForeignExe pathToExe) {
+			this.version = version;
+			this.style = style;
 			this.exe = Objects.requireNonNull(pathToExe);
 		}
 

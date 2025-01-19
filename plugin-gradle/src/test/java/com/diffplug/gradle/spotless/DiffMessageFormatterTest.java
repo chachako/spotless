@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.regex.Pattern;
 
 import org.assertj.core.api.Assertions;
 import org.gradle.api.Project;
@@ -31,11 +30,11 @@ import org.junit.jupiter.api.Test;
 
 import com.diffplug.common.base.StringPrinter;
 import com.diffplug.spotless.FileSignature;
-import com.diffplug.spotless.FormatterStep;
 import com.diffplug.spotless.LineEnding;
 import com.diffplug.spotless.ResourceHarness;
 import com.diffplug.spotless.TestProvisioner;
 import com.diffplug.spotless.extra.integration.DiffMessageFormatter;
+import com.diffplug.spotless.generic.TrimTrailingWhitespaceStep;
 
 class DiffMessageFormatterTest extends ResourceHarness {
 
@@ -62,7 +61,7 @@ class DiffMessageFormatterTest extends ResourceHarness {
 		private SpotlessTaskImpl createFormatTask(String name) {
 			SpotlessTaskImpl task = project.getTasks().create("spotless" + SpotlessPlugin.capitalize(name), SpotlessTaskImpl.class);
 			task.init(taskService);
-			task.setLineEndingsPolicy(LineEnding.UNIX.createPolicy());
+			task.setLineEndingsPolicy(project.provider(LineEnding.UNIX::createPolicy));
 			task.setTarget(Collections.singletonList(file));
 			return task;
 		}
@@ -100,7 +99,7 @@ class DiffMessageFormatterTest extends ResourceHarness {
 
 	private Bundle create(List<File> files) throws IOException {
 		Bundle bundle = new Bundle("underTest");
-		bundle.task.setLineEndingsPolicy(LineEnding.UNIX.createPolicy());
+		bundle.task.setLineEndingsPolicy(bundle.project.provider(LineEnding.UNIX::createPolicy));
 		bundle.task.setTarget(files);
 		return bundle;
 	}
@@ -151,10 +150,7 @@ class DiffMessageFormatterTest extends ResourceHarness {
 	@Test
 	void whitespaceProblem() throws Exception {
 		Bundle spotless = create(setFile("testFile").toContent("A \nB\t\nC  \n"));
-		spotless.task.addStep(FormatterStep.createNeverUpToDate("trimTrailing", input -> {
-			Pattern pattern = Pattern.compile("[ \t]+$", Pattern.UNIX_LINES | Pattern.MULTILINE);
-			return pattern.matcher(input).replaceAll("");
-		}));
+		spotless.task.setSteps(List.of(TrimTrailingWhitespaceStep.create()));
 		assertCheckFailure(spotless,
 				"    testFile",
 				"        @@ -1,3 +1,3 @@",

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,9 +27,17 @@ public class PalantirJavaFormat implements FormatterStepFactory {
 	@Parameter
 	private String version;
 
+	@Parameter
+	private String style;
+
+	@Parameter
+	private Boolean formatJavadoc;
+
 	@Override
 	public FormatterStep newFormatterStep(FormatterStepConfig config) {
 		String version = this.version != null ? this.version : PalantirJavaFormatStep.defaultVersion();
-		return PalantirJavaFormatStep.create(version, config.getProvisioner());
+		String style = this.style != null ? this.style : PalantirJavaFormatStep.defaultStyle();
+		boolean formatJavadoc = this.formatJavadoc != null ? this.formatJavadoc : PalantirJavaFormatStep.defaultFormatJavadoc();
+		return PalantirJavaFormatStep.create(version, style, formatJavadoc, config.getProvisioner());
 	}
 }

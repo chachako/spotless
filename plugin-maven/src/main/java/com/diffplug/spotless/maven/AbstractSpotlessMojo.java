@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -53,30 +52,39 @@ import org.eclipse.aether.repository.RemoteRepository;
 import org.sonatype.plexus.build.incremental.BuildContext;
 
 import com.diffplug.spotless.Formatter;
+import com.diffplug.spotless.Jvm;
 import com.diffplug.spotless.LineEnding;
 import com.diffplug.spotless.Provisioner;
 import com.diffplug.spotless.generic.LicenseHeaderStep;
 import com.diffplug.spotless.maven.antlr4.Antlr4;
 import com.diffplug.spotless.maven.cpp.Cpp;
+import com.diffplug.spotless.maven.css.Css;
 import com.diffplug.spotless.maven.generic.Format;
 import com.diffplug.spotless.maven.generic.LicenseHeader;
+import com.diffplug.spotless.maven.gherkin.Gherkin;
+import com.diffplug.spotless.maven.go.Go;
 import com.diffplug.spotless.maven.groovy.Groovy;
 import com.diffplug.spotless.maven.incremental.UpToDateChecker;
 import com.diffplug.spotless.maven.incremental.UpToDateChecking;
 import com.diffplug.spotless.maven.java.Java;
 import com.diffplug.spotless.maven.javascript.Javascript;
+import com.diffplug.spotless.maven.json.Json;
 import com.diffplug.spotless.maven.kotlin.Kotlin;
 import com.diffplug.spotless.maven.markdown.Markdown;
 import com.diffplug.spotless.maven.pom.Pom;
+import com.diffplug.spotless.maven.protobuf.Protobuf;
 import com.diffplug.spotless.maven.python.Python;
+import com.diffplug.spotless.maven.rdf.Rdf;
 import com.diffplug.spotless.maven.scala.Scala;
+import com.diffplug.spotless.maven.shell.Shell;
 import com.diffplug.spotless.maven.sql.Sql;
 import com.diffplug.spotless.maven.typescript.Typescript;
+import com.diffplug.spotless.maven.yaml.Yaml;
 
 public abstract class AbstractSpotlessMojo extends AbstractMojo {
 	private static final String DEFAULT_INDEX_FILE_NAME = "spotless-index";
 	private static final String DEFAULT_ENCODING = "UTF-8";
-	private static final String DEFAULT_LINE_ENDINGS = "GIT_ATTRIBUTES";
+	private static final String DEFAULT_LINE_ENDINGS = "GIT_ATTRIBUTES_FAST_ALLSAME";
 
 	/** Value to allow unsetting the ratchet inherited from parent pom configuration. */
 	static final String RATCHETFROM_NONE = "NONE";
@@ -96,7 +104,7 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 	@Parameter(defaultValue = "${mojoExecution.goal}", required = true, readonly = true)
 	private String goal;
 
-	@Parameter(defaultValue = "false")
+	@Parameter(property = "spotless.skip", defaultValue = "false")
 	private boolean skip;
 
 	@Parameter(property = "spotless.apply.skip", defaultValue = "false")
@@ -115,7 +123,7 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 	private List<RemoteRepository> repositories;
 
 	@Parameter(defaultValue = "${project.basedir}", required = true, readonly = true)
-	private File baseDir;
+	protected File baseDir;
 
 	@Parameter(defaultValue = "${project.build.directory}", required = true, readonly = true)
 	private File buildDir;
@@ -134,6 +142,9 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 
 	@Parameter
 	private List<Format> formats = Collections.emptyList();
+
+	@Parameter
+	private Css css;
 
 	@Parameter
 	private Groovy groovy;
@@ -171,6 +182,27 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 	@Parameter
 	private Markdown markdown;
 
+	@Parameter
+	private Json json;
+
+	@Parameter
+	private Shell shell;
+
+	@Parameter
+	private Yaml yaml;
+
+	@Parameter
+	private Gherkin gherkin;
+
+	@Parameter
+	private Go go;
+
+	@Parameter
+	private Rdf rdf;
+
+	@Parameter
+	private Protobuf protobuf;
+
 	@Parameter(property = "spotlessFiles")
 	private String filePatterns;
 
@@ -178,9 +210,26 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 	private String setLicenseHeaderYearsFromGitHistory;
 
 	@Parameter
-	private UpToDateChecking upToDateChecking;
+	private UpToDateChecking upToDateChecking = UpToDateChecking.enabled();
 
-	protected abstract void process(Iterable<File> files, Formatter formatter, UpToDateChecker upToDateChecker) throws MojoExecutionException;
+	/**
+	 * If set to {@code true} will also run on incremental builds (i.e. within Eclipse with m2e).
+	 * Otherwise this goal is skipped in incremental builds and only runs on full builds.
+	 */
+	@Parameter(defaultValue = "false")
+	protected boolean m2eEnableForIncrementalBuild;
+
+	protected abstract void process(String name, Iterable<File> files, Formatter formatter, UpToDateChecker upToDateChecker) throws MojoExecutionException;
+
+	private static final int MINIMUM_JRE = 11;
+
+	protected AbstractSpotlessMojo() {
+		if (Jvm.version() < MINIMUM_JRE) {
+			throw new RuntimeException("Spotless requires JRE " + MINIMUM_JRE + " or newer, this was " + Jvm.version() + ".\n"
+					+ "You can upgrade your build JRE and still compile for older targets, see below\n"
+					+ "https://docs.gradle.org/current/userguide/building_java_projects.html#sec:java_cross_compilation");
+		}
+	}
 
 	@Override
 	public final void execute() throws MojoExecutionException {
@@ -192,18 +241,18 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 		List<FormatterFactory> formatterFactories = getFormatterFactories();
 		FormatterConfig config = getFormatterConfig();
 
-		Map<FormatterFactory, Supplier<Iterable<File>>> formatterFactoryToFiles = new HashMap<>();
+		Map<FormatterFactory, Supplier<Iterable<File>>> formatterFactoryToFiles = new LinkedHashMap<>();
 		for (FormatterFactory formatterFactory : formatterFactories) {
 			Supplier<Iterable<File>> filesToFormat = () -> collectFiles(formatterFactory, config);
 			formatterFactoryToFiles.put(formatterFactory, filesToFormat);
 		}
 
 		try (FormattersHolder formattersHolder = FormattersHolder.create(formatterFactoryToFiles, config);
-				UpToDateChecker upToDateChecker = createUpToDateChecker(formattersHolder.getFormatters())) {
-			for (Entry<Formatter, Supplier<Iterable<File>>> entry : formattersHolder.getFormattersWithFiles().entrySet()) {
-				Formatter formatter = entry.getKey();
-				Iterable<File> files = entry.getValue().get();
-				process(files, formatter, upToDateChecker);
+				UpToDateChecker upToDateChecker = createUpToDateChecker(formattersHolder.openFormatters.values())) {
+			for (FormatterFactory factory : formattersHolder.openFormatters.keySet()) {
+				Formatter formatter = formattersHolder.openFormatters.get(factory);
+				Iterable<File> files = formattersHolder.factoryToFiles.get(factory).get();
+				process(formattersHolder.nameFor(factory), files, formatter, upToDateChecker);
 			}
 		} catch (PluginException e) {
 			throw e.asMojoExecutionException();
@@ -212,6 +261,10 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 
 	private boolean shouldSkip() {
 		if (skip) {
+			return true;
+		}
+		if (buildContext.isIncremental() && !m2eEnableForIncrementalBuild) {
+			getLog().debug("Skipping for incremental builds as parameter 'enableForIncrementalBuilds' is set to 'false'");
 			return true;
 		}
 
@@ -301,7 +354,7 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 
 	private Set<String> getIncludes(FormatterFactory formatterFactory) {
 		Set<String> configuredIncludes = formatterFactory.includes();
-		Set<String> includes = configuredIncludes.isEmpty() ? formatterFactory.defaultIncludes() : configuredIncludes;
+		Set<String> includes = configuredIncludes.isEmpty() ? formatterFactory.defaultIncludes(project) : configuredIncludes;
 		if (includes.isEmpty()) {
 			throw new PluginException("You must specify some files to include, such as '<includes><include>src/**/*.blah</include></includes>'");
 		}
@@ -335,8 +388,9 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 	}
 
 	private List<FormatterFactory> getFormatterFactories() {
-		return Stream.concat(formats.stream(), Stream.of(groovy, java, scala, kotlin, cpp, typescript, javascript, antlr4, pom, sql, python, markdown))
+		return Stream.concat(formats.stream(), Stream.of(groovy, java, scala, kotlin, cpp, css, typescript, javascript, antlr4, pom, sql, python, markdown, json, shell, yaml, gherkin, go, rdf, protobuf))
 				.filter(Objects::nonNull)
+				.map(factory -> factory.init(repositorySystemSession))
 				.collect(toList());
 	}
 
@@ -354,9 +408,9 @@ public abstract class AbstractSpotlessMojo extends AbstractMojo {
 		}
 		final UpToDateChecker checker;
 		if (upToDateChecking != null && upToDateChecking.isEnabled()) {
-			getLog().info("Up-to-date checking enabled");
 			checker = UpToDateChecker.forProject(project, indexFile, formatters, getLog());
 		} else {
+			getLog().info("Up-to-date checking disabled");
 			checker = UpToDateChecker.noop(project, indexFile, getLog());
 		}
 		return UpToDateChecker.wrapWithBuildContext(checker, buildContext);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 DiffPlug
+ * Copyright 2022-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 
 import com.diffplug.spotless.FormatterFunc;
 import com.diffplug.spotless.FormatterStep;
+import com.diffplug.spotless.SerializedFunction;
 
 /**
  * Some formatters put every annotation on its own line
@@ -36,7 +37,8 @@ import com.diffplug.spotless.FormatterStep;
  * <p>
  * Note: A type annotation is an annotation that is meta-annotated with {@code @Target({ElementType.TYPE_USE})}.
  */
-public final class FormatAnnotationsStep {
+public final class FormatAnnotationsStep implements Serializable {
+	private static final long serialVersionUID = 1L;
 
 	/**
 	 * Simple names of type annotations.
@@ -55,6 +57,13 @@ public final class FormatAnnotationsStep {
 					"Acceleration",
 					"ACCTop",
 					"AinferBottom",
+					"AinferDefaultType",
+					"AinferParent",
+					"AinferSibling1",
+					"AinferSibling2",
+					"AinferTop",
+					"AinferImplicitAnno",
+					"AinferSiblingWithFields",
 					"AlwaysSafe",
 					"Angle",
 					"AnnoWithStringArg",
@@ -62,6 +71,8 @@ public final class FormatAnnotationsStep {
 					"ArrayLen",
 					"ArrayLenRange",
 					"ArrayWithoutPackage",
+					"AssertFalse",
+					"AssertTrue",
 					"AwtAlphaCompositingRule",
 					"AwtColorSpace",
 					"AwtCursorType",
@@ -99,13 +110,18 @@ public final class FormatAnnotationsStep {
 					"Critical",
 					"Current",
 					"D",
+					"DecimalMax",
+					"DecimalMin",
 					"DefaultType",
 					"degrees",
 					"Det",
+					"Digits",
+					"DoesNotMatchRegex",
 					"DotSeparatedIdentifiers",
 					"DotSeparatedIdentifiersOrPrimitiveType",
 					"DoubleVal",
 					"E",
+					"Email",
 					"Encrypted",
 					"EnhancedRegex",
 					"EnumVal",
@@ -129,6 +145,8 @@ public final class FormatAnnotationsStep {
 					"FqBinaryName",
 					"Frequency",
 					"FullyQualifiedName",
+					"Future",
+					"FutureOrPresent",
 					"g",
 					"GTENegativeOne",
 					"GuardedBy",
@@ -203,6 +221,7 @@ public final class FormatAnnotationsStep {
 					"m3",
 					"Mass",
 					"MatchesRegex",
+					"Max",
 					"MaybeAliased",
 					"MaybeDerivedFromConstant",
 					"MaybePresent",
@@ -211,6 +230,7 @@ public final class FormatAnnotationsStep {
 					"MethodVal",
 					"MethodValBottom",
 					"min",
+					"Min",
 					"MinLen",
 					"mm",
 					"mm2",
@@ -225,7 +245,9 @@ public final class FormatAnnotationsStep {
 					"MustCallAlias",
 					"MustCallUnknown",
 					"N",
+					"Negative",
 					"NegativeIndexFor",
+					"NegativeOrZero",
 					"NewObject",
 					"NonConstant",
 					"NonDet",
@@ -234,19 +256,25 @@ public final class FormatAnnotationsStep {
 					"NonNull",
 					"NonNullType",
 					"NonRaw",
+					"NotBlank",
 					"NotCalledMethods",
+					"NotEmpty",
 					"NotNull",
 					"NotQualifier",
 					"NTDBottom",
 					"NTDMiddle",
 					"NTDSide",
 					"NTDTop",
+					"Null",
 					"Nullable",
 					"NullableType",
 					"Odd",
 					"OptionalBottom",
 					"OrderNonDet",
 					"Parent",
+					"Past",
+					"PastOrPresent",
+					"Pattern",
 					"PatternA",
 					"PatternAB",
 					"PatternAC",
@@ -287,6 +315,7 @@ public final class FormatAnnotationsStep {
 					"PolyValue",
 					"PolyVariableNameDefault",
 					"Positive",
+					"PositiveOrZero",
 					"Present",
 					"PrimitiveType",
 					"PropertyKey",
@@ -316,6 +345,7 @@ public final class FormatAnnotationsStep {
 					"SignednessGlb",
 					"SignedPositive",
 					"SignedPositiveFromUnsigned",
+					"Size",
 					"Speed",
 					"StringVal",
 					"SubQual",
@@ -371,6 +401,7 @@ public final class FormatAnnotationsStep {
 					"UpperBoundBottom",
 					"UpperBoundLiteral",
 					"UpperBoundUnknown",
+					"Valid",
 					"ValueTypeAnno",
 					"VariableNameDefaultBottom",
 					"VariableNameDefaultMiddle",
@@ -381,14 +412,14 @@ public final class FormatAnnotationsStep {
 
 			);
 
-	static final String NAME = "No line break between type annotation and type";
+	private static final String NAME = "No line break between type annotation and type";
 
 	public static FormatterStep create() {
 		return create(Collections.emptyList(), Collections.emptyList());
 	}
 
 	public static FormatterStep create(List<String> addedTypeAnnotations, List<String> removedTypeAnnotations) {
-		return FormatterStep.create(NAME, new State(addedTypeAnnotations, removedTypeAnnotations), State::toFormatter);
+		return FormatterStep.create(NAME, new State(addedTypeAnnotations, removedTypeAnnotations), SerializedFunction.identity(), State::toFormatter);
 	}
 
 	private FormatAnnotationsStep() {}
@@ -424,13 +455,13 @@ public final class FormatAnnotationsStep {
 		}
 
 		FormatterFunc toFormatter() {
-			return unixStr -> fixupTypeAnnotations(unixStr);
+			return this::fixupTypeAnnotations;
 		}
 
 		/**
 		 * Removes line break between type annotations and the following type.
 		 *
-		 * @param the text of a Java file
+		 * @param unixStr the text of a Java file
 		 * @return corrected text of the Java file
 		 */
 		String fixupTypeAnnotations(String unixStr) {

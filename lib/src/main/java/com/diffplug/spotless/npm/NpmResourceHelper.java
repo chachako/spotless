@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Objects;
@@ -102,6 +103,18 @@ final class NpmResourceHelper {
 			if ((System.currentTimeMillis() - startedAt) > maxWaitTime.toMillis()) {
 				throw new TimeoutException("The file did not appear within " + maxWaitTime);
 			}
+			ThrowingEx.run(() -> Thread.sleep(100));
+		}
+	}
+
+	static void awaitFileDeleted(File file, Duration maxWaitTime) throws TimeoutException {
+		final long startedAt = System.currentTimeMillis();
+		while (file.exists()) {
+			// wait for at most maxWaitTime
+			if ((System.currentTimeMillis() - startedAt) > maxWaitTime.toMillis()) {
+				throw new TimeoutException("The file did not disappear within " + maxWaitTime);
+			}
+			ThrowingEx.run(() -> Thread.sleep(100));
 		}
 	}
 
@@ -121,5 +134,21 @@ final class NpmResourceHelper {
 		} catch (IOException e) {
 			throw ThrowingEx.asRuntime(e);
 		}
+	}
+
+	static String md5(File file) {
+		return md5(readUtf8StringFromFile(file));
+	}
+
+	static String md5(String fileContent) {
+		MessageDigest md = ThrowingEx.get(() -> MessageDigest.getInstance("MD5"));
+		md.update(fileContent.getBytes(StandardCharsets.UTF_8));
+		byte[] digest = md.digest();
+		// convert byte array digest to hex string
+		StringBuilder sb = new StringBuilder();
+		for (byte b : digest) {
+			sb.append(String.format("%02x", b & 0xff));
+		}
+		return sb.toString();
 	}
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package com.diffplug.gradle.spotless;
 
 import static java.util.Objects.requireNonNull;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +30,7 @@ import org.gradle.api.Project;
 
 import com.diffplug.gradle.spotless.JavascriptExtension.EslintBaseConfig;
 import com.diffplug.spotless.FormatterStep;
+import com.diffplug.spotless.biome.BiomeFlavor;
 import com.diffplug.spotless.npm.EslintConfig;
 import com.diffplug.spotless.npm.EslintFormatterStep;
 import com.diffplug.spotless.npm.EslintTypescriptConfig;
@@ -57,7 +59,10 @@ public class TypescriptExtension extends FormatExtension {
 		return tsfmt(TsFmtFormatterStep.defaultDevDependenciesWithTsFmt(version));
 	}
 
-	/** Creates a {@code TypescriptFormatExtension} using exactly the specified npm packages. */
+	/**
+	 * Creates a {@code TypescriptFormatExtension} using exactly the specified npm
+	 * packages.
+	 */
 	public TypescriptFormatExtension tsfmt(Map<String, String> devDependencies) {
 		TypescriptFormatExtension tsfmt = new TypescriptFormatExtension(devDependencies);
 		addStep(tsfmt.createStep());
@@ -81,44 +86,44 @@ public class TypescriptExtension extends FormatExtension {
 			this.devDependencies = Objects.requireNonNull(devDependencies);
 		}
 
-		public void config(final Map<String, Object> config) {
+		public TypescriptFormatExtension config(final Map<String, Object> config) {
 			this.config = new TreeMap<>(requireNonNull(config));
 			replaceStep();
+			return this;
 		}
 
-		public void tsconfigFile(final Object path) {
-			configFile(TsConfigFileType.TSCONFIG, path);
+		public TypescriptFormatExtension tsconfigFile(final Object path) {
+			return configFile(TsConfigFileType.TSCONFIG, path);
 		}
 
-		public void tslintFile(final Object path) {
-			configFile(TsConfigFileType.TSLINT, path);
+		public TypescriptFormatExtension tslintFile(final Object path) {
+			return configFile(TsConfigFileType.TSLINT, path);
 		}
 
-		public void vscodeFile(final Object path) {
-			configFile(TsConfigFileType.VSCODE, path);
+		public TypescriptFormatExtension vscodeFile(final Object path) {
+			return configFile(TsConfigFileType.VSCODE, path);
 		}
 
-		public void tsfmtFile(final Object path) {
-			configFile(TsConfigFileType.TSFMT, path);
+		public TypescriptFormatExtension tsfmtFile(final Object path) {
+			return configFile(TsConfigFileType.TSFMT, path);
 		}
 
-		private void configFile(TsConfigFileType filetype, Object path) {
+		private TypescriptFormatExtension configFile(TsConfigFileType filetype, Object path) {
 			this.configFileType = requireNonNull(filetype);
 			this.configFilePath = requireNonNull(path);
 			replaceStep();
+			return this;
 		}
 
 		public FormatterStep createStep() {
 			final Project project = getProject();
 
-			return TsFmtFormatterStep.create(
-					devDependencies,
-					provisioner(),
-					project.getProjectDir(),
-					project.getBuildDir(),
-					new NpmPathResolver(npmFileOrNull(), npmrcFileOrNull(), project.getProjectDir(), project.getRootDir()),
-					typedConfigFile(),
-					config);
+			return TsFmtFormatterStep
+					.create(devDependencies, provisioner(), project.getProjectDir(),
+							project.getLayout().getBuildDirectory().getAsFile().get(), npmModulesCacheOrNull(),
+							new NpmPathResolver(npmFileOrNull(), nodeFileOrNull(), npmrcFileOrNull(),
+									Arrays.asList(project.getProjectDir(), project.getRootDir())),
+							typedConfigFile(), config);
 		}
 
 		private TypedTsFmtConfigFile typedConfigFile() {
@@ -150,7 +155,8 @@ public class TypescriptExtension extends FormatExtension {
 	}
 
 	/**
-	 * Overrides the parser to be set to typescript, no matter what the user's config says.
+	 * Overrides the parser to be set to typescript, no matter what the user's
+	 * config says.
 	 */
 	public class TypescriptPrettierConfig extends PrettierConfig {
 		TypescriptPrettierConfig(Map<String, String> devDependencies) {
@@ -165,11 +171,12 @@ public class TypescriptExtension extends FormatExtension {
 
 		private void fixParserToTypescript() {
 			if (this.prettierConfig == null) {
-				this.prettierConfig = Collections.singletonMap("parser", "typescript");
+				this.prettierConfig = new TreeMap<>(Collections.singletonMap("parser", "typescript"));
 			} else {
 				final Object replaced = this.prettierConfig.put("parser", "typescript");
 				if (replaced != null) {
-					getProject().getLogger().warn("overriding parser option to 'typescript'. Was set to '{}'", replaced);
+					getProject().getLogger().warn("overriding parser option to 'typescript'. Was set to '{}'",
+							replaced);
 				}
 			}
 		}
@@ -207,20 +214,57 @@ public class TypescriptExtension extends FormatExtension {
 		public FormatterStep createStep() {
 			final Project project = getProject();
 
-			return EslintFormatterStep.create(
-					devDependencies,
-					provisioner(),
-					project.getProjectDir(),
-					project.getBuildDir(),
-					new NpmPathResolver(npmFileOrNull(), npmrcFileOrNull(), project.getProjectDir(), project.getRootDir()),
+			return EslintFormatterStep.create(devDependencies, provisioner(), project.getProjectDir(),
+					project.getLayout().getBuildDirectory().getAsFile().get(), npmModulesCacheOrNull(),
+					new NpmPathResolver(npmFileOrNull(), nodeFileOrNull(), npmrcFileOrNull(),
+							Arrays.asList(project.getProjectDir(), project.getRootDir())),
 					eslintConfig());
 		}
 
 		protected EslintConfig eslintConfig() {
-			return new EslintTypescriptConfig(
-					configFilePath != null ? getProject().file(configFilePath) : null,
-					configJs,
-					typescriptConfigFilePath != null ? getProject().file(typescriptConfigFilePath) : null);
+			return new EslintTypescriptConfig(configFilePath != null ? getProject().file(configFilePath) : null,
+					configJs, typescriptConfigFilePath != null ? getProject().file(typescriptConfigFilePath) : null);
+		}
+	}
+
+	/**
+	 * Defaults to downloading the default Biome version from the network. To work
+	 * offline, you can specify the path to the Biome executable via
+	 * {@code biome().pathToExe(...)}.
+	 */
+	public BiomeTs biome() {
+		return biome(null);
+	}
+
+	/** Downloads the given Biome version from the network. */
+	public BiomeTs biome(String version) {
+		var biomeConfig = new BiomeTs(version);
+		addStep(biomeConfig.createStep());
+		return biomeConfig;
+	}
+
+	/**
+	 * Biome formatter step for TypeScript.
+	 */
+	public class BiomeTs extends BiomeStepConfig<BiomeTs> {
+		/**
+		 * Creates a new Biome formatter step config for formatting TypeScript files.
+		 * Unless overwritten, the given Biome version is downloaded from the network.
+		 *
+		 * @param version Biome version to use.
+		 */
+		public BiomeTs(String version) {
+			super(getProject(), TypescriptExtension.this::replaceStep, BiomeFlavor.BIOME, version);
+		}
+
+		@Override
+		protected String getLanguage() {
+			return "ts?";
+		}
+
+		@Override
+		protected BiomeTs getThis() {
+			return this;
 		}
 	}
 

@@ -1,27 +1,41 @@
-apply plugin: 'org.gradle.test-retry'
 apply plugin: 'com.adarshr.test-logger'
+
+// See com.diffplug.spotless.tag package for available JUnit 5 @Tag annotations
 def special = [
-	'Npm',
-	'Black',
-	'Clang'
+	'black',
+	'buf',
+	'clang',
+	'gofmt',
+	'npm',
+	'shfmt'
 ]
 
 boolean isCiServer = System.getenv().containsKey("CI")
-tasks.named('test') {
-	// See com.diffplug.spotless.tag package for available JUnit 5 @Tag annotations
-	useJUnitPlatform {
-		excludeTags special as String[]
-	}
+tasks.withType(Test).configureEach {
 	if (isCiServer) {
 		retry {
 			maxRetries = 2
 			maxFailures = 10
 		}
 	}
+	// selfie https://selfie.dev/jvm/get-started#gradle
+	environment project.properties.subMap([
+		"selfie"
+	]) // optional, see "Overwrite everything" below
+	inputs.files(fileTree("src/test") {
+		// optional, improves up-to-date checking
+		include "**/*.ss"
+	})
+	// https://docs.gradle.org/8.8/userguide/performance.html#execute_tests_in_parallel
+	maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
 }
-
+tasks.named('test').configure {
+	useJUnitPlatform {
+		excludeTags special as String[]
+	}
+}
 special.forEach { tag ->
-	tasks.register("test${tag}", Test) {
+	tasks.register("test${tag.capitalize()}", Test) {
 		useJUnitPlatform { includeTags tag }
 	}
 }

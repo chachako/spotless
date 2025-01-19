@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 DiffPlug
+ * Copyright 2022-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,9 @@
  */
 package com.diffplug.spotless.json.gson;
 
-import java.io.IOException;
 import java.io.Serializable;
-import java.io.StringWriter;
-import java.util.Collections;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.util.Objects;
 
 import com.diffplug.spotless.FormatterFunc;
@@ -26,81 +25,53 @@ import com.diffplug.spotless.FormatterStep;
 import com.diffplug.spotless.JarState;
 import com.diffplug.spotless.Provisioner;
 
-public class GsonStep {
+public class GsonStep implements Serializable {
+	private static final long serialVersionUID = 1L;
 	private static final String MAVEN_COORDINATES = "com.google.code.gson:gson";
+	private static final String INCOMPATIBLE_ERROR_MESSAGE = "There was a problem interacting with Gson; maybe you set an incompatible version?";
+	public static final String NAME = "gson";
+	public static final String DEFAULT_VERSION = "2.11.0";
 
-	public static FormatterStep create(int indentSpaces, boolean sortByKeys, boolean escapeHtml, String version, Provisioner provisioner) {
+	private final JarState.Promised jarState;
+	private final GsonConfig gsonConfig;
+
+	private GsonStep(JarState.Promised jarState, GsonConfig gsonConfig) {
+		this.gsonConfig = gsonConfig;
+		this.jarState = jarState;
+	}
+
+	public static FormatterStep create(GsonConfig gsonConfig, Provisioner provisioner) {
 		Objects.requireNonNull(provisioner, "provisioner cannot be null");
-		return FormatterStep.createLazy("gson", () -> new State(indentSpaces, sortByKeys, escapeHtml, version, provisioner), State::toFormatter);
+		return FormatterStep.create(NAME,
+				new GsonStep(JarState.promise(() -> JarState.from(MAVEN_COORDINATES + ":" + gsonConfig.getVersion(), provisioner)), gsonConfig),
+				GsonStep::equalityState,
+				State::toFormatter);
+	}
+
+	private State equalityState() {
+		return new State(jarState.get(), gsonConfig);
 	}
 
 	private static final class State implements Serializable {
-		private static final long serialVersionUID = -1493479043249379485L;
+		private static final long serialVersionUID = -3240568265160440420L;
 
-		private final int indentSpaces;
-		private final boolean sortByKeys;
-		private final boolean escapeHtml;
 		private final JarState jarState;
+		private final GsonConfig gsonConfig;
 
-		private State(int indentSpaces, boolean sortByKeys, boolean escapeHtml, String version, Provisioner provisioner) throws IOException {
-			this.indentSpaces = indentSpaces;
-			this.sortByKeys = sortByKeys;
-			this.escapeHtml = escapeHtml;
-			this.jarState = JarState.from(MAVEN_COORDINATES + ":" + version, provisioner);
+		private State(JarState jarState, GsonConfig gsonConfig) {
+			this.jarState = jarState;
+			this.gsonConfig = gsonConfig;
 		}
 
 		FormatterFunc toFormatter() {
-			JsonWriterWrapper jsonWriterWrapper = new JsonWriterWrapper(jarState);
-			JsonElementWrapper jsonElementWrapper = new JsonElementWrapper(jarState);
-			JsonObjectWrapper jsonObjectWrapper = new JsonObjectWrapper(jarState, jsonElementWrapper);
-			GsonBuilderWrapper gsonBuilderWrapper = new GsonBuilderWrapper(jarState);
-			GsonWrapper gsonWrapper = new GsonWrapper(jarState, jsonElementWrapper, jsonWriterWrapper);
-
-			Object gsonBuilder = gsonBuilderWrapper.serializeNulls(gsonBuilderWrapper.createGsonBuilder());
-			if (!escapeHtml) {
-				gsonBuilder = gsonBuilderWrapper.disableHtmlEscaping(gsonBuilder);
+			try {
+				Class<?> formatterFunc = jarState.getClassLoader().loadClass("com.diffplug.spotless.glue.gson.GsonFormatterFunc");
+				Constructor<?> constructor = formatterFunc.getConstructor(GsonConfig.class);
+				return (FormatterFunc) constructor.newInstance(gsonConfig);
+			} catch (ClassNotFoundException | NoSuchMethodException | InvocationTargetException
+					| InstantiationException | IllegalAccessException | NoClassDefFoundError cause) {
+				throw new IllegalStateException(INCOMPATIBLE_ERROR_MESSAGE, cause);
 			}
-			Object gson = gsonBuilderWrapper.create(gsonBuilder);
-
-			return inputString -> {
-				String result;
-				if (inputString.isEmpty()) {
-					result = "";
-				} else {
-					Object jsonElement = gsonWrapper.fromJson(gson, inputString, jsonElementWrapper.getWrappedClass());
-					if (jsonElement == null) {
-						throw new AssertionError(GsonWrapperBase.FAILED_TO_PARSE_ERROR_MESSAGE);
-					}
-					if (sortByKeys && jsonElementWrapper.isJsonObject(jsonElement)) {
-						jsonElement = sortByKeys(jsonObjectWrapper, jsonElementWrapper, jsonElement);
-					}
-					try (StringWriter stringWriter = new StringWriter()) {
-						Object jsonWriter = jsonWriterWrapper.createJsonWriter(stringWriter);
-						jsonWriterWrapper.setIndent(jsonWriter, generateIndent(indentSpaces));
-						gsonWrapper.toJson(gson, jsonElement, jsonWriter);
-						result = stringWriter + "\n";
-					}
-				}
-				return result;
-			};
-		}
-
-		private Object sortByKeys(JsonObjectWrapper jsonObjectWrapper, JsonElementWrapper jsonElementWrapper, Object jsonObject) {
-			Object result = jsonObjectWrapper.createJsonObject();
-			jsonObjectWrapper.keySet(jsonObject).stream().sorted()
-					.forEach(key -> {
-						Object element = jsonObjectWrapper.get(jsonObject, key);
-						if (jsonElementWrapper.isJsonObject(element)) {
-							element = sortByKeys(jsonObjectWrapper, jsonElementWrapper, element);
-						}
-						jsonObjectWrapper.add(result, key, element);
-					});
-			return result;
-		}
-
-		private String generateIndent(int indentSpaces) {
-			return String.join("", Collections.nCopies(indentSpaces, " "));
 		}
 	}
-
 }

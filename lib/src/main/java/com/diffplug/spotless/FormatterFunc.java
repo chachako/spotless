@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2021 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.diffplug.spotless;
 
 import java.io.File;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -33,6 +34,14 @@ public interface FormatterFunc {
 	}
 
 	/**
+	 * Calculates a list of lints against the given content.
+	 * By default, that's just an throwables thrown by the lint.
+	 */
+	default List<Lint> lint(String content, File file) throws Exception {
+		return List.of();
+	}
+
+	/**
 	 * {@code Function<String, String>} and {@code BiFunction<String, File, String>} whose implementation
 	 * requires a resource which should be released when the function is no longer needed.
 	 */
@@ -42,11 +51,11 @@ public interface FormatterFunc {
 
 		/**
 		 * Dangerous way to create a {@link Closeable} from an AutoCloseable and a function.
-		 *
+		 * <p>
 		 * It's important for FormatterStep's to allocate their resources as lazily as possible.
 		 * It's easy to create a resource inside the state, and not realize that it may not be
 		 * released.  It's far better to use one of the non-deprecated {@code of()} methods below.
-		 *
+		 * <p>
 		 * The bug (and its fix) which is easy to write using this method: https://github.com/diffplug/spotless/commit/7f16ecca031810b5e6e6f647e1f10a6d2152d9f4
 		 * How the {@code of()} methods below make the correct thing easier to write and safer: https://github.com/diffplug/spotless/commit/18c10f9c93d6f18f753233d0b5f028d5f0961916
 		 */
@@ -71,15 +80,17 @@ public interface FormatterFunc {
 			};
 		}
 
-		/** @deprecated synonym for {@link #ofDangerous(AutoCloseable, FormatterFunc)} */
-		@Deprecated
-		public static Closeable of(AutoCloseable closeable, FormatterFunc function) {
-			return ofDangerous(closeable, function);
-		}
-
 		@FunctionalInterface
 		interface ResourceFunc<T extends AutoCloseable> {
 			String apply(T resource, String unix) throws Exception;
+
+			/**
+			 * Calculates a list of lints against the given content.
+			 * By default, that's just an throwables thrown by the lint.
+			 */
+			default List<Lint> lint(T resource, String unix) throws Exception {
+				return List.of();
+			}
 		}
 
 		/** Creates a {@link FormatterFunc.Closeable} which uses the given resource to execute the format function. */
@@ -107,6 +118,10 @@ public interface FormatterFunc {
 		@FunctionalInterface
 		interface ResourceFuncNeedsFile<T extends AutoCloseable> {
 			String apply(T resource, String unix, File file) throws Exception;
+
+			default List<Lint> lint(T resource, String content, File file) throws Exception {
+				return List.of();
+			}
 		}
 
 		/** Creates a {@link FormatterFunc.Closeable} which uses the given resource to execute the file-dependent format function. */
@@ -121,13 +136,18 @@ public interface FormatterFunc {
 
 				@Override
 				public String apply(String unix, File file) throws Exception {
-					FormatterStepImpl.checkNotSentinel(file);
+					Formatter.checkNotSentinel(file);
 					return function.apply(resource, unix, file);
 				}
 
 				@Override
 				public String apply(String unix) throws Exception {
-					return apply(unix, FormatterStepImpl.SENTINEL);
+					return apply(unix, Formatter.NO_FILE_SENTINEL);
+				}
+
+				@Override
+				public List<Lint> lint(String content, File file) throws Exception {
+					return function.lint(resource, content, file);
 				}
 			};
 		}
@@ -150,13 +170,13 @@ public interface FormatterFunc {
 
 		@Override
 		default String apply(String unix, File file) throws Exception {
-			FormatterStepImpl.checkNotSentinel(file);
+			Formatter.checkNotSentinel(file);
 			return applyWithFile(unix, file);
 		}
 
 		@Override
 		default String apply(String unix) throws Exception {
-			return apply(unix, FormatterStepImpl.SENTINEL);
+			return apply(unix, Formatter.NO_FILE_SENTINEL);
 		}
 	}
 }

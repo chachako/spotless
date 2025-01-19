@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2023 DiffPlug
+ * Copyright 2021-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,21 +21,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
-import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.maven.model.Model;
+import org.apache.maven.model.Plugin;
+import org.apache.maven.model.PluginManagement;
 import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.ReaderFactory;
 import org.codehaus.plexus.util.xml.XmlStreamReader;
 import org.junit.jupiter.api.Test;
 
-import com.diffplug.spotless.FormatExceptionPolicyStrict;
 import com.diffplug.spotless.Formatter;
 import com.diffplug.spotless.FormatterStep;
 import com.diffplug.spotless.LineEnding;
+import com.diffplug.spotless.NeverUpToDateStep;
+import com.diffplug.spotless.SerializedFunction;
 import com.diffplug.spotless.maven.MavenIntegrationHarness;
 
 class PluginFingerprintTest extends MavenIntegrationHarness {
@@ -106,12 +109,43 @@ class PluginFingerprintTest extends MavenIntegrationHarness {
 	}
 
 	@Test
-	void failsWhenProjectDoesNotContainSpotlessPlugin() {
+	void failsForProjectWithoutSpotlessPlugin() {
 		MavenProject projectWithoutSpotless = new MavenProject();
 
 		assertThatThrownBy(() -> PluginFingerprint.from(projectWithoutSpotless, FORMATTERS))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("Spotless plugin absent from the project");
+	}
+
+	@Test
+	void buildsFingerprintForProjectWithSpotlessPluginInBuildPlugins() {
+		MavenProject project = new MavenProject();
+		Plugin spotlessPlugin = new Plugin();
+		spotlessPlugin.setGroupId("com.diffplug.spotless");
+		spotlessPlugin.setArtifactId("spotless-maven-plugin");
+		spotlessPlugin.setVersion("1.2.3");
+		project.getBuild().addPlugin(spotlessPlugin);
+
+		PluginFingerprint fingerprint = PluginFingerprint.from(project, Collections.emptyList());
+
+		assertThat(fingerprint).isNotNull();
+	}
+
+	@Test
+	void buildsFingerprintForProjectWithSpotlessPluginInPluginManagement() {
+		MavenProject project = new MavenProject();
+		Plugin spotlessPlugin = new Plugin();
+		spotlessPlugin.setGroupId("com.diffplug.spotless");
+		spotlessPlugin.setArtifactId("spotless-maven-plugin");
+		spotlessPlugin.setVersion("1.2.3");
+		project.getBuild().addPlugin(spotlessPlugin);
+		PluginManagement pluginManagement = new PluginManagement();
+		pluginManagement.addPlugin(spotlessPlugin);
+		project.getBuild().setPluginManagement(pluginManagement);
+
+		PluginFingerprint fingerprint = PluginFingerprint.from(project, Collections.emptyList());
+
+		assertThat(fingerprint).isNotNull();
 	}
 
 	private MavenProject mavenProject(String spotlessVersion) throws Exception {
@@ -128,7 +162,7 @@ class PluginFingerprintTest extends MavenIntegrationHarness {
 	}
 
 	private static FormatterStep formatterStep(String name) {
-		return FormatterStep.createNeverUpToDate(name, input -> input);
+		return NeverUpToDateStep.create(name, SerializedFunction.identity());
 	}
 
 	private static Formatter formatter(FormatterStep... steps) {
@@ -137,11 +171,9 @@ class PluginFingerprintTest extends MavenIntegrationHarness {
 
 	private static Formatter formatter(LineEnding lineEnding, FormatterStep... steps) {
 		return Formatter.builder()
-				.rootDir(Paths.get(""))
 				.lineEndingsPolicy(lineEnding.createPolicy())
 				.encoding(UTF_8)
 				.steps(Arrays.asList(steps))
-				.exceptionPolicy(new FormatExceptionPolicyStrict())
 				.build();
 	}
 }

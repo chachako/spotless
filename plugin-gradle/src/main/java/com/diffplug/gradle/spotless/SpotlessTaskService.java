@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2022 DiffPlug
+ * Copyright 2021-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,15 +18,23 @@ package com.diffplug.gradle.spotless;
 import java.io.File;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 
 import org.gradle.api.DefaultTask;
+import org.gradle.api.file.ConfigurableFileTree;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.file.FileVisitDetails;
+import org.gradle.api.file.FileVisitor;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.Provider;
 import org.gradle.api.services.BuildService;
 import org.gradle.api.services.BuildServiceParameters;
 import org.gradle.api.tasks.Internal;
@@ -35,6 +43,7 @@ import org.gradle.tooling.events.OperationCompletionListener;
 
 import com.diffplug.common.base.Preconditions;
 import com.diffplug.common.base.Unhandled;
+import com.diffplug.spotless.Lint;
 import com.diffplug.spotless.Provisioner;
 
 /**
@@ -91,9 +100,22 @@ public abstract class SpotlessTaskService implements BuildService<BuildServicePa
 
 	static String INDEPENDENT_HELPER = "Helper";
 
+	static void usesServiceTolerateTestFailure(DefaultTask task, Provider<SpotlessTaskService> serviceProvider) {
+		try {
+			task.usesService(serviceProvider);
+		} catch (ClassCastException e) {
+			// this happens only in our test mocking, e.g. DiffMessageFormatterTest
+			// https://github.com/diffplug/spotless/pull/1570/commits/c45e1f2322c78f272689feb35753bbc633422bfa
+			// it's fine to swallow these exceptions
+		}
+	}
+
 	static abstract class ClientTask extends DefaultTask {
 		@Internal
-		abstract Property<File> getSpotlessOutDirectory();
+		abstract Property<File> getSpotlessCleanDirectory();
+
+		@Internal
+		abstract Property<File> getSpotlessLintsDirectory();
 
 		@Internal
 		abstract Property<SpotlessTaskService> getTaskService();
@@ -105,8 +127,9 @@ public abstract class SpotlessTaskService implements BuildService<BuildServicePa
 		protected abstract ObjectFactory getConfigCacheWorkaround();
 
 		void init(SpotlessTaskImpl impl) {
-			usesService(impl.getTaskServiceProvider());
-			getSpotlessOutDirectory().set(impl.getOutputDirectory());
+			usesServiceTolerateTestFailure(this, impl.getTaskServiceProvider());
+			getSpotlessCleanDirectory().set(impl.getCleanDirectory());
+			getSpotlessLintsDirectory().set(impl.getLintsDirectory());
 			getTaskService().set(impl.getTaskService());
 			getProjectDir().set(impl.getProjectDir());
 		}
@@ -142,6 +165,42 @@ public abstract class SpotlessTaskService implements BuildService<BuildServicePa
 
 		protected boolean applyHasRun() {
 			return service().apply.containsKey(sourceTaskPath());
+		}
+
+		protected String allLintsErrorMsgDetailed(ConfigurableFileTree lintsFiles, boolean detailed) {
+			AtomicInteger total = new AtomicInteger(0);
+			TreeMap<String, LinkedHashMap<String, List<Lint>>> allLints = new TreeMap<>();
+			lintsFiles.visit(new FileVisitor() {
+				@Override
+				public void visitDir(FileVisitDetails fileVisitDetails) {
+
+				}
+
+				@Override
+				public void visitFile(FileVisitDetails fileVisitDetails) {
+					String path = fileVisitDetails.getPath();
+					getLogger().debug("Reading lints for " + path);
+					LinkedHashMap<String, List<Lint>> lints = SerializableMisc.fromFile(LinkedHashMap.class, fileVisitDetails.getFile());
+					allLints.put(path, lints);
+					lints.values().forEach(list -> total.addAndGet(list.size()));
+				}
+			});
+			StringBuilder builder = new StringBuilder();
+			builder.append("There were " + total.get() + " lint error(s), they must be fixed or suppressed.\n");
+			for (Map.Entry<String, LinkedHashMap<String, List<Lint>>> lintsPerFile : allLints.entrySet()) {
+				for (Map.Entry<String, List<Lint>> stepLints : lintsPerFile.getValue().entrySet()) {
+					String stepName = stepLints.getKey();
+					for (Lint lint : stepLints.getValue()) {
+						builder.append(lintsPerFile.getKey());
+						builder.append(":");
+						boolean oneLine = !detailed;
+						lint.addWarningMessageTo(builder, stepName, oneLine);
+						builder.append("\n");
+					}
+				}
+			}
+			builder.append("Resolve these lints or suppress with `suppressLintsFor`");
+			return builder.toString();
 		}
 	}
 }

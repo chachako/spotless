@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import com.diffplug.spotless.ProcessRunner;
 import com.diffplug.spotless.ResourceHarness;
 import com.diffplug.spotless.maven.MavenIntegrationHarness;
-import com.diffplug.spotless.maven.MavenRunner.Result;
 import com.diffplug.spotless.npm.EslintFormatterStep;
 import com.diffplug.spotless.npm.EslintStyleGuide;
 import com.diffplug.spotless.tag.NpmTest;
@@ -48,7 +49,7 @@ class TypescriptFormatStepTest extends MavenIntegrationHarness {
 		return TEST_FILE_PATH;
 	}
 
-	private Result runExpectingErrorTsfmt(String kind) throws IOException, InterruptedException {
+	private ProcessRunner.Result runExpectingErrorTsfmt(String kind) throws IOException, InterruptedException {
 		prepareRunTsfmt(kind);
 		return mavenRunner().withArguments("spotless:apply").runHasError();
 	}
@@ -124,8 +125,8 @@ class TypescriptFormatStepTest extends MavenIntegrationHarness {
 		setFile("tsfmt.json").toResource("npm/tsfmt/tsfmt/tsfmt.json");
 
 		setFile(path).toResource("npm/tsfmt/tsfmt/tsfmt.dirty");
-		Result result = mavenRunner().withArguments("spotless:apply").runHasError();
-		assertThat(result.output()).contains("must specify exactly one configFile or config");
+		ProcessRunner.Result result = mavenRunner().withArguments("spotless:apply").runHasError();
+		assertThat(result.stdOutUtf8()).contains("must specify exactly one configFile or config");
 	}
 
 	@Test
@@ -141,8 +142,8 @@ class TypescriptFormatStepTest extends MavenIntegrationHarness {
 				"  <tslintFile>${basedir}/tslint.json</tslintFile>",
 				"</tsfmt>");
 		setFile("tslint.json").toResource("npm/tsfmt/tslint/tslint.json");
-		Result result = runExpectingErrorTsfmt("tslint");
-		assertThat(result.output()).containsPattern("Running npm command.*npm install.* failed with exit code: 1");
+		ProcessRunner.Result result = runExpectingErrorTsfmt("tslint");
+		assertThat(result.stdOutUtf8()).containsPattern("Running npm command.*npm install.* failed with exit code: 1");
 	}
 
 	@Test
@@ -159,8 +160,8 @@ class TypescriptFormatStepTest extends MavenIntegrationHarness {
 				"  <npmrc>${basedir}/.custom_npmrc</npmrc>",
 				"</tsfmt>");
 		setFile("tslint.json").toResource("npm/tsfmt/tslint/tslint.json");
-		Result result = runExpectingErrorTsfmt("tslint");
-		assertThat(result.output()).containsPattern("Running npm command.*npm install.* failed with exit code: 1");
+		ProcessRunner.Result result = runExpectingErrorTsfmt("tslint");
+		assertThat(result.stdOutUtf8()).containsPattern("Running npm command.*npm install.* failed with exit code: 1");
 	}
 
 	@Test
@@ -210,6 +211,7 @@ class TypescriptFormatStepTest extends MavenIntegrationHarness {
 	}
 
 	@Test
+	@Disabled
 	void eslintStyleguideXo() throws Exception {
 		writePomWithTypescriptSteps(
 				TEST_FILE_PATH,

@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 DiffPlug
+ * Copyright 2020-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,12 @@ package com.diffplug.gradle.spotless;
 
 import java.io.IOException;
 
-import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
 import org.junit.jupiter.api.Test;
 
 public class ConfigurationCacheTest extends GradleIntegrationHarness {
 	@Override
-	protected GradleRunner gradleRunner() throws IOException {
+	public GradleRunner gradleRunner() throws IOException {
 		setFile("gradle.properties").toContent("org.gradle.unsafe.configuration-cache=true");
 		setFile("settings.gradle").toContent("enableFeaturePreview(\"STABLE_CONFIGURATION_CACHE\")");
 		return super.gradleRunner().withGradleVersion(GradleVersionSupport.STABLE_CONFIGURATION_CACHE.version);
@@ -39,7 +38,7 @@ public class ConfigurationCacheTest extends GradleIntegrationHarness {
 				"apply plugin: 'java'",
 				"spotless {",
 				"    java {",
-				"        googleJavaFormat('1.2')",
+				"        googleJavaFormat()",
 				"    }",
 				"}");
 		gradleRunner().withArguments("help").build();
@@ -55,7 +54,7 @@ public class ConfigurationCacheTest extends GradleIntegrationHarness {
 				"apply plugin: 'java'",
 				"spotless {",
 				"    java {",
-				"        googleJavaFormat('1.2')",
+				"        googleJavaFormat()",
 				"    }",
 				"}",
 				"tasks.named('spotlessJavaApply').get()");
@@ -63,7 +62,7 @@ public class ConfigurationCacheTest extends GradleIntegrationHarness {
 	}
 
 	@Test
-	public void jvmLocalCache() throws IOException {
+	public void multipleRuns() throws IOException {
 		setFile("build.gradle").toLines(
 				"plugins {",
 				"    id 'com.diffplug.spotless'",
@@ -72,7 +71,7 @@ public class ConfigurationCacheTest extends GradleIntegrationHarness {
 				"spotless {",
 				"    java {",
 				"        target file('test.java')",
-				"        googleJavaFormat('1.2')",
+				"        googleJavaFormat()",
 				"    }",
 				"}");
 
@@ -90,10 +89,5 @@ public class ConfigurationCacheTest extends GradleIntegrationHarness {
 		gradleRunner().withArguments("spotlessCheck").buildAndFail();
 		gradleRunner().withArguments("spotlessApply").build();
 		assertFile("test.java").sameAsResource("java/googlejavaformat/JavaCodeFormatted.test");
-
-		BuildResult failure = gradleRunner().withDebug(true).withArguments("spotlessApply", "--stacktrace").buildAndFail();
-		failure.getOutput().contains("Spotless daemon-local cache is stale. Regenerate the cache with\n" +
-				"  rm -rf .gradle/configuration-cache\n" +
-				"For more information see #123\n");
 	}
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,14 @@
 package com.diffplug.spotless;
 
 import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.Reader;
 import java.io.Serializable;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
-import java.util.function.BiFunction;
 import java.util.function.Supplier;
-
-import javax.annotation.Nullable;
 
 /**
  * Represents the line endings which should be written by the tool.
@@ -37,6 +38,14 @@ public enum LineEnding {
 			return super.createPolicy();
 		}
 	},
+	/** Uses the same line endings as Git, and assumes that every single file being formatted will have the same line ending. */
+	GIT_ATTRIBUTES_FAST_ALLSAME {
+		/** .gitattributes is path-specific, so you must use {@link LineEnding#createPolicy(File, Supplier)}. */
+		@Override @Deprecated
+		public Policy createPolicy() {
+			return super.createPolicy();
+		}
+	},
 	/** {@code \n} on unix systems, {@code \r\n} on windows systems. */
 	PLATFORM_NATIVE,
 	/** {@code \r\n} */
@@ -44,31 +53,31 @@ public enum LineEnding {
     /** {@code \n} */
     UNIX,
     /** {@code \r} */
-    MAC_CLASSIC;
+    MAC_CLASSIC,
+    /** preserve the line ending of the first line (no matter which format) */
+    PRESERVE;
 	// @formatter:on
 
 	/** Returns a {@link Policy} appropriate for files which are contained within the given rootFolder. */
 	public Policy createPolicy(File projectDir, Supplier<Iterable<File>> toFormat) {
 		Objects.requireNonNull(projectDir, "projectDir");
 		Objects.requireNonNull(toFormat, "toFormat");
-		if (this != GIT_ATTRIBUTES) {
-			return createPolicy();
+		String gitAttributesMethod;
+		if (this == GIT_ATTRIBUTES) {
+			gitAttributesMethod = "create";
+		} else if (this == GIT_ATTRIBUTES_FAST_ALLSAME) {
+			gitAttributesMethod = "createFastAllSame";
 		} else {
-			if (gitAttributesPolicyCreator == null) {
-				try {
-					Class<?> clazz = Class.forName("com.diffplug.spotless.extra.GitAttributesLineEndings");
-					Method method = clazz.getMethod("create", File.class, Supplier.class);
-					gitAttributesPolicyCreator = (proj, target) -> ThrowingEx.get(() -> (Policy) method.invoke(null, proj, target));
-				} catch (ClassNotFoundException | NoSuchMethodException | SecurityException e) {
-					throw new IllegalStateException("LineEnding.GIT_ATTRIBUTES requires the spotless-lib-extra library, but it is not on the classpath", e);
-				}
-			}
-			// gitAttributesPolicyCreator will always be nonnull at this point
-			return gitAttributesPolicyCreator.apply(projectDir, toFormat);
+			return createPolicy();
+		}
+		try {
+			Class<?> clazz = Class.forName("com.diffplug.spotless.extra.GitAttributesLineEndings");
+			Method method = clazz.getMethod(gitAttributesMethod, File.class, Supplier.class);
+			return ThrowingEx.get(() -> (Policy) method.invoke(null, projectDir, toFormat));
+		} catch (ClassNotFoundException | NoSuchMethodException | SecurityException e) {
+			throw new IllegalStateException("LineEnding.GIT_ATTRIBUTES requires the spotless-lib-extra library, but it is not on the classpath", e);
 		}
 	}
-
-	private static volatile @Nullable BiFunction<File, Supplier<Iterable<File>>, Policy> gitAttributesPolicyCreator;
 
 	// @formatter:off
 	/** Should use {@link #createPolicy(File, Supplier)} instead, but this will work iff its a path-independent LineEnding policy. */
@@ -77,7 +86,8 @@ public enum LineEnding {
 		case PLATFORM_NATIVE:	return _platformNativePolicy;
 		case WINDOWS:			return WINDOWS_POLICY;
 		case UNIX:				return UNIX_POLICY;
-        case MAC_CLASSIC:       return MAC_CLASSIC_POLICY;
+		case MAC_CLASSIC:		return MAC_CLASSIC_POLICY;
+		case PRESERVE:			return PRESERVE_POLICY;
 		default:	throw new UnsupportedOperationException(this + " is a path-specific line ending.");
 		}
 	}
@@ -97,9 +107,50 @@ public enum LineEnding {
 		}
 	}
 
+	static class PreserveLineEndingPolicy extends NoLambda.EqualityBasedOnSerialization implements Policy {
+        private static final long serialVersionUID = 2L;
+
+        @Override
+        public String getEndingFor(File file) {
+            // assume US-ASCII encoding (only line ending characters need to be decoded anyways)
+            try (Reader reader = new FileReader(file, StandardCharsets.US_ASCII)) {
+                return getEndingFor(reader);
+            } catch (IOException e) {
+                throw new IllegalArgumentException("Could not determine line ending of file: " + file, e);
+            }
+        }
+
+        static String getEndingFor(Reader reader) throws IOException {
+            char previousCharacter = 0;
+            char currentCharacter = 0;
+            int readResult;
+            while ((readResult = reader.read()) != -1) {
+                currentCharacter = (char)readResult;
+                if (currentCharacter == '\n') {
+                    if (previousCharacter == '\r') {
+                        return WINDOWS.str();
+                    } else {
+                        return UNIX.str();
+                    }
+                } else {
+                    if (previousCharacter == '\r') {
+                        return MAC_CLASSIC.str();
+                    }
+                }
+                previousCharacter = currentCharacter;
+            }
+            if (previousCharacter == '\r') {
+                return MAC_CLASSIC.str();
+            }
+            // assume UNIX line endings if no line ending was found
+            return UNIX.str();
+        }
+	}
+
 	private static final Policy WINDOWS_POLICY = new ConstantLineEndingPolicy(WINDOWS.str());
 	private static final Policy UNIX_POLICY = new ConstantLineEndingPolicy(UNIX.str());
     private static final Policy MAC_CLASSIC_POLICY = new ConstantLineEndingPolicy(MAC_CLASSIC.str());
+    private static final Policy PRESERVE_POLICY = new PreserveLineEndingPolicy();
 	private static final String _platformNative = System.getProperty("line.separator");
 	private static final Policy _platformNativePolicy = new ConstantLineEndingPolicy(_platformNative);
 	private static final boolean nativeIsWin = _platformNative.equals(WINDOWS.str());
@@ -121,7 +172,7 @@ public enum LineEnding {
 		case PLATFORM_NATIVE:	return _platformNative;
 		case WINDOWS:			return "\r\n";
 		case UNIX:				return "\n";
-		case MAC_CLASSIC:       return "\r";
+		case MAC_CLASSIC:		return "\r";
 		default:	throw new UnsupportedOperationException(this + " is a path-specific line ending.");
 		}
 	}

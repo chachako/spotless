@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ import static com.diffplug.spotless.markdown.LibMarkdownPreconditions.requireKey
 
 import java.io.Serializable;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
@@ -31,32 +33,52 @@ import org.slf4j.LoggerFactory;
 import com.diffplug.spotless.FormatterFunc;
 import com.diffplug.spotless.FormatterStep;
 import com.diffplug.spotless.JarState;
+import com.diffplug.spotless.Jvm;
 import com.diffplug.spotless.Provisioner;
-import com.diffplug.spotless.ThrowingEx.Supplier;
 
 /** A step for <a href="https://github.com/diffplug/freshmark">FreshMark</a>. */
-public class FreshMarkStep {
-	// prevent direct instantiation
-	private FreshMarkStep() {}
+public class FreshMarkStep implements Serializable {
+	private static final long serialVersionUID = 1L;
 
 	private static final String DEFAULT_VERSION = "1.3.1";
 	private static final String NAME = "freshmark";
 	private static final String MAVEN_COORDINATE = "com.diffplug.freshmark:freshmark:";
+
+	private static final String NASHORN_MAVEN_COORDINATE = "org.openjdk.nashorn:nashorn-core:";
+
+	private static final String NASHORN_VERSION = "15.4";
 	private static final String FORMATTER_CLASS = "com.diffplug.freshmark.FreshMark";
 	private static final String FORMATTER_METHOD = "compile";
 
+	private final JarState.Promised jarState;
+	private final Map<String, ?> properties;
+
+	private FreshMarkStep(JarState.Promised jarState, Map<String, ?> properties) {
+		this.jarState = jarState;
+		this.properties = properties;
+	}
+
 	/** Creates a formatter step for the given version and settings file. */
-	public static FormatterStep create(Supplier<Map<String, ?>> properties, Provisioner provisioner) {
+	public static FormatterStep create(Map<String, ?> properties, Provisioner provisioner) {
 		return create(defaultVersion(), properties, provisioner);
 	}
 
 	/** Creates a formatter step for the given version and settings file. */
-	public static FormatterStep create(String version, Supplier<Map<String, ?>> properties, Provisioner provisioner) {
+	public static FormatterStep create(String version, Map<String, ?> properties, Provisioner provisioner) {
 		Objects.requireNonNull(version, "version");
 		Objects.requireNonNull(properties, "properties");
 		Objects.requireNonNull(provisioner, "provisioner");
-		return FormatterStep.createLazy(NAME,
-				() -> new State(JarState.from(MAVEN_COORDINATE + version, provisioner), properties.get()),
+
+		List<String> mavenCoordinates = new ArrayList<>();
+		mavenCoordinates.add(MAVEN_COORDINATE + version);
+		if (Jvm.version() >= 15) {
+			mavenCoordinates.add("com.diffplug.jscriptbox:jscriptbox:3.0.1");
+			mavenCoordinates.add(NASHORN_MAVEN_COORDINATE + NASHORN_VERSION);
+		}
+
+		return FormatterStep.create(NAME,
+				new FreshMarkStep(JarState.promise(() -> JarState.from(mavenCoordinates, provisioner)), properties),
+				FreshMarkStep::equalityState,
 				State::createFormat);
 	}
 
@@ -64,12 +86,15 @@ public class FreshMarkStep {
 		return DEFAULT_VERSION;
 	}
 
+	private State equalityState() throws Exception {
+		return new State(jarState.get(), properties);
+	}
+
 	private static class State implements Serializable {
 		private static final long serialVersionUID = 1L;
 
-		/** The jar that contains the formatter. */
-		final JarState jarState;
-		final NavigableMap<String, ?> properties;
+		private final JarState jarState;
+		private final NavigableMap<String, ?> properties;
 
 		State(JarState jarState, Map<String, ?> properties) {
 			this.jarState = jarState;

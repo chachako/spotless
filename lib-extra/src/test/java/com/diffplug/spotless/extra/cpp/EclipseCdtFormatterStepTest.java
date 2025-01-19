@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2021 DiffPlug
+ * Copyright 2016-2025 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,31 +15,32 @@
  */
 package com.diffplug.spotless.extra.cpp;
 
+import static org.junit.jupiter.api.condition.JRE.JAVA_17;
+
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import com.diffplug.spotless.Jvm;
 import com.diffplug.spotless.TestProvisioner;
-import com.diffplug.spotless.extra.eclipse.EclipseResourceHarness;
+import com.diffplug.spotless.extra.eclipse.EquoResourceHarness;
 
-class EclipseCdtFormatterStepTest extends EclipseResourceHarness {
-	private final static Jvm.Support<String> JVM_SUPPORT = Jvm.<String> support("Oldest Version").add(8, "4.11.0");
-	private final static String INPUT = "#include <a.h>;\nint main(int argc,   \nchar *argv[]) {}";
-	private final static String EXPECTED = "#include <a.h>;\nint main(int argc, char *argv[]) {\n}\n";
-
+class EclipseCdtFormatterStepTest extends EquoResourceHarness {
 	public EclipseCdtFormatterStepTest() {
-		super(EclipseCdtFormatterStep.createBuilder(TestProvisioner.mavenCentral()), INPUT, EXPECTED);
+		super(EclipseCdtFormatterStep.createBuilder(TestProvisioner.mavenCentral()));
 	}
 
 	@ParameterizedTest
 	@MethodSource
+	@EnabledForJreRange(min = JAVA_17)
 	void formatWithVersion(String version) throws Exception {
-		assertFormatted(version);
+		harnessFor(version).test("main.c",
+				"#include <a.h>;\nint main(int argc,   \nchar *argv[]) {}",
+				"#include <a.h>;\nint main(int argc, char *argv[]) {\n}\n");
 	}
 
 	private static Stream<String> formatWithVersion() {
-		return Stream.of(JVM_SUPPORT.getRecommendedFormatterVersion(), EclipseCdtFormatterStep.defaultVersion());
+		return Stream.of("11.0", "11.6", EclipseCdtFormatterStep.defaultVersion());
 	}
 }

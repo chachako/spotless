@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,11 +41,10 @@ class EslintFormatterStepTest {
 				"custom_rules", EslintFormatterStep.defaultDevDependenciesForTypescript(),
 				"styleguide/airbnb", EslintStyleGuide.JS_AIRBNB.mergedWith(EslintFormatterStep.defaultDevDependencies()),
 				"styleguide/google", EslintStyleGuide.JS_GOOGLE.mergedWith(EslintFormatterStep.defaultDevDependencies()),
-				"styleguide/standard", EslintStyleGuide.JS_STANDARD.mergedWith(EslintFormatterStep.defaultDevDependencies()),
-				"styleguide/xo", EslintStyleGuide.JS_XO.mergedWith(EslintFormatterStep.defaultDevDependencies()));
+				"styleguide/standard", EslintStyleGuide.JS_STANDARD.mergedWith(EslintFormatterStep.defaultDevDependencies()));
 
 		@ParameterizedTest(name = "{index}: eslint can be applied using ruleset {0}")
-		@ValueSource(strings = {"custom_rules", "styleguide/airbnb", "styleguide/google", "styleguide/standard", "styleguide/xo"})
+		@ValueSource(strings = {"custom_rules", "styleguide/airbnb", "styleguide/google", "styleguide/standard"})
 		void formattingUsingRulesetsFile(String ruleSetName) throws Exception {
 			String filedir = "npm/eslint/javascript/" + ruleSetName + "/";
 
@@ -56,7 +55,6 @@ class EslintFormatterStepTest {
 			//			final File eslintRc = setFile(buildDir().getPath() + "/.eslintrc.js").toResource(filedir + ".eslintrc.js");
 
 			final String dirtyFile = filedir + "javascript-es6.dirty";
-			File dirtyFileFile = setFile(testDir + "test.js").toResource(dirtyFile);
 			final String cleanFile = filedir + "javascript-es6.clean";
 
 			final FormatterStep formatterStep = EslintFormatterStep.create(
@@ -64,11 +62,12 @@ class EslintFormatterStepTest {
 					TestProvisioner.mavenCentral(),
 					projectDir(),
 					buildDir(),
+					null,
 					npmPathResolver(),
 					new EslintConfig(eslintRc, null));
 
 			try (StepHarnessWithFile stepHarness = StepHarnessWithFile.forStep(this, formatterStep)) {
-				stepHarness.test(dirtyFileFile, ResourceHarness.getTestResource(dirtyFile), ResourceHarness.getTestResource(cleanFile));
+				stepHarness.test("test.js", ResourceHarness.getTestResource(dirtyFile), ResourceHarness.getTestResource(cleanFile));
 			}
 		}
 	}
@@ -79,11 +78,10 @@ class EslintFormatterStepTest {
 
 		private final Map<String, Map<String, String>> devDependenciesForRuleset = ImmutableMap.of(
 				"custom_rules", EslintFormatterStep.defaultDevDependenciesForTypescript(),
-				"styleguide/standard_with_typescript", EslintStyleGuide.TS_STANDARD_WITH_TYPESCRIPT.mergedWith(EslintFormatterStep.defaultDevDependenciesForTypescript()),
-				"styleguide/xo", EslintStyleGuide.TS_XO_TYPESCRIPT.mergedWith(EslintFormatterStep.defaultDevDependenciesForTypescript()));
+				"styleguide/standard_with_typescript", EslintStyleGuide.TS_STANDARD_WITH_TYPESCRIPT.mergedWith(EslintFormatterStep.defaultDevDependenciesForTypescript()));
 
 		@ParameterizedTest(name = "{index}: eslint can be applied using ruleset {0}")
-		@ValueSource(strings = {"custom_rules", "styleguide/standard_with_typescript", "styleguide/xo"})
+		@ValueSource(strings = {"custom_rules", "styleguide/standard_with_typescript"})
 		void formattingUsingRulesetsFile(String ruleSetName) throws Exception {
 			String filedir = "npm/eslint/typescript/" + ruleSetName + "/";
 
@@ -99,7 +97,6 @@ class EslintFormatterStepTest {
 				tsconfigFile = setFile(testDir + "tsconfig.json").toResource(filedir + "tsconfig.json");
 			}
 			final String dirtyFile = filedir + "typescript.dirty";
-			File dirtyFileFile = setFile(testDir + "test.ts").toResource(dirtyFile);
 			final String cleanFile = filedir + "typescript.clean";
 
 			final FormatterStep formatterStep = EslintFormatterStep.create(
@@ -107,11 +104,12 @@ class EslintFormatterStepTest {
 					TestProvisioner.mavenCentral(),
 					projectDir(),
 					buildDir(),
+					null,
 					npmPathResolver(),
 					new EslintTypescriptConfig(eslintRc, null, tsconfigFile));
 
 			try (StepHarnessWithFile stepHarness = StepHarnessWithFile.forStep(this, formatterStep)) {
-				stepHarness.test(dirtyFileFile, ResourceHarness.getTestResource(dirtyFile), ResourceHarness.getTestResource(cleanFile));
+				stepHarness.test(testDir + "test.ts", ResourceHarness.getTestResource(dirtyFile), ResourceHarness.getTestResource(cleanFile));
 			}
 		}
 	}
@@ -156,7 +154,6 @@ class EslintFormatterStepTest {
 
 			File tsconfigFile = setFile(testDir + "tsconfig.json").toResource(filedir + "tsconfig.json");
 			final String dirtyFile = filedir + "typescript.dirty";
-			File dirtyFileFile = setFile(testDir + "test.ts").toResource(dirtyFile);
 			final String cleanFile = filedir + "typescript.clean";
 
 			final FormatterStep formatterStep = EslintFormatterStep.create(
@@ -164,11 +161,12 @@ class EslintFormatterStepTest {
 					TestProvisioner.mavenCentral(),
 					projectDir(),
 					buildDir(),
+					null,
 					npmPathResolver(),
 					new EslintTypescriptConfig(null, esLintConfig, tsconfigFile));
 
 			try (StepHarnessWithFile stepHarness = StepHarnessWithFile.forStep(this, formatterStep)) {
-				stepHarness.test(dirtyFileFile, ResourceHarness.getTestResource(dirtyFile), ResourceHarness.getTestResource(cleanFile));
+				stepHarness.test(testDir + "test.ts", ResourceHarness.getTestResource(dirtyFile), ResourceHarness.getTestResource(cleanFile));
 			}
 		}
 	}

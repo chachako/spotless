@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 DiffPlug
+ * Copyright 2023-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.diffplug.spotless.maven.json;
 import java.util.Collections;
 import java.util.Set;
 
+import org.apache.maven.project.MavenProject;
+
 import com.diffplug.spotless.maven.FormatterFactory;
 
 /**
@@ -27,7 +29,7 @@ public class Json extends FormatterFactory {
 	public static final int DEFAULT_INDENTATION = 4;
 
 	@Override
-	public Set<String> defaultIncludes() {
+	public Set<String> defaultIncludes(MavenProject project) {
 		return Collections.emptySet();
 	}
 
@@ -44,4 +46,15 @@ public class Json extends FormatterFactory {
 		addStepFactory(gson);
 	}
 
+	public void addJackson(JacksonJson jackson) {
+		addStepFactory(jackson);
+	}
+
+	public void addBiome(BiomeJson biome) {
+		addStepFactory(biome);
+	}
+
+	public void addJsonPatch(JsonPatch jsonPatch) {
+		addStepFactory(jsonPatch);
+	}
 }

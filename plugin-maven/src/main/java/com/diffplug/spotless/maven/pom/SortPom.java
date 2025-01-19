@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 DiffPlug
+ * Copyright 2021-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,9 @@ public class SortPom implements FormatterStepFactory {
 	private final SortPomCfg defaultValues = new SortPomCfg();
 
 	@Parameter
+	String version = defaultValues.version;
+
+	@Parameter
 	String encoding = defaultValues.encoding;
 
 	@Parameter
@@ -42,6 +45,9 @@ public class SortPom implements FormatterStepFactory {
 	boolean keepBlankLines = defaultValues.keepBlankLines;
 
 	@Parameter
+	boolean endWithNewline = defaultValues.endWithNewline;
+
+	@Parameter
 	int nrOfIndentSpace = defaultValues.nrOfIndentSpace;
 
 	@Parameter
@@ -51,13 +57,22 @@ public class SortPom implements FormatterStepFactory {
 	boolean indentSchemaLocation = defaultValues.indentSchemaLocation;
 
 	@Parameter
+	String indentAttribute = defaultValues.indentAttribute;
+
+	@Parameter
 	String predefinedSortOrder = defaultValues.predefinedSortOrder;
+
+	@Parameter
+	boolean quiet = defaultValues.quiet;
 
 	@Parameter
 	String sortOrderFile = defaultValues.sortOrderFile;
 
 	@Parameter
 	String sortDependencies = defaultValues.sortDependencies;
+
+	@Parameter
+	String sortDependencyManagement = defaultValues.sortDependencyManagement;
 
 	@Parameter
 	String sortDependencyExclusions = defaultValues.sortDependencyExclusions;
@@ -77,17 +92,22 @@ public class SortPom implements FormatterStepFactory {
 	@Override
 	public FormatterStep newFormatterStep(FormatterStepConfig stepConfig) {
 		SortPomCfg cfg = new SortPomCfg();
+		cfg.version = version;
 		cfg.encoding = encoding;
 		cfg.lineSeparator = lineSeparator;
 		cfg.expandEmptyElements = expandEmptyElements;
 		cfg.spaceBeforeCloseEmptyElement = spaceBeforeCloseEmptyElement;
 		cfg.keepBlankLines = keepBlankLines;
+		cfg.endWithNewline = endWithNewline;
 		cfg.nrOfIndentSpace = nrOfIndentSpace;
 		cfg.indentBlankLines = indentBlankLines;
 		cfg.indentSchemaLocation = indentSchemaLocation;
+		cfg.indentAttribute = indentAttribute;
 		cfg.predefinedSortOrder = predefinedSortOrder;
+		cfg.quiet = quiet;
 		cfg.sortOrderFile = sortOrderFile;
 		cfg.sortDependencies = sortDependencies;
+		cfg.sortDependencyManagement = sortDependencyManagement;
 		cfg.sortDependencyExclusions = sortDependencyExclusions;
 		cfg.sortPlugins = sortPlugins;
 		cfg.sortProperties = sortProperties;

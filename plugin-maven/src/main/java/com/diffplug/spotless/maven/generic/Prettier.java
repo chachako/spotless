@@ -85,6 +85,11 @@ public class Prettier extends AbstractNpmFormatterStepFactory {
 						if (Boolean.TRUE.toString().equalsIgnoreCase(entry.getValue()) || Boolean.FALSE.toString().equalsIgnoreCase(entry.getValue())) {
 							return new AbstractMap.SimpleEntry<>(entry.getKey(), Boolean.parseBoolean(entry.getValue()));
 						}
+						// Prettier v3 - plugins config will be a comma delimited list of plugins
+						if (entry.getKey().equals("plugins")) {
+							List<String> values = entry.getValue().isEmpty() ? List.of() : Arrays.asList(entry.getValue().split(","));
+							return new AbstractMap.SimpleEntry<>(entry.getKey(), values);
+						}
 						return entry;
 					})
 					.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
@@ -95,9 +100,10 @@ public class Prettier extends AbstractNpmFormatterStepFactory {
 		// create the format step
 		File baseDir = baseDir(stepConfig);
 		File buildDir = buildDir(stepConfig);
+		File cacheDir = cacheDir(stepConfig);
 		PrettierConfig prettierConfig = new PrettierConfig(configFileHandler, configInline);
 		NpmPathResolver npmPathResolver = npmPathResolver(stepConfig);
-		return PrettierFormatterStep.create(devDependencies, stepConfig.getProvisioner(), baseDir, buildDir, npmPathResolver, prettierConfig);
+		return PrettierFormatterStep.create(devDependencies, stepConfig.getProvisioner(), baseDir, buildDir, cacheDir, npmPathResolver, prettierConfig);
 	}
 
 	private static IllegalArgumentException onlyOneConfig() {

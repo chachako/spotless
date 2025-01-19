@@ -1,6 +1,6 @@
 # Contributing to Spotless
 
-Pull requests are welcome, preferably against `main`.  Feel free to develop spotless any way you like.
+Pull requests are welcome, preferably against `main`.  Feel free to develop spotless any way you like, but if you like Eclipse and Gradle Buildship then [`gradlew equoIde` will install an IDE and set it up for you](https://github.com/equodev/equo-ide).
 
 ## How Spotless works
 
@@ -10,24 +10,23 @@ In order to use and combine `FormatterStep`, you first create a `Formatter`, whi
 
 - an encoding
 - a list of `FormatterStep`
-- a line endings policy (`LineEnding.GIT_ATTRIBUTES` is almost always the best choice)
+- a line endings policy (`LineEnding.GIT_ATTRIBUTES_FAST_ALLSAME` is almost always the best choice)
 
-Once you have an instance of `Formatter`, you can call `boolean isClean(File)`, or `void applyTo(File)` to either check or apply formatting to a file.  Spotless will then:
+Once you have an instance of `Formatter`, you can call `DirtyState.of(Formatter, File)`. Under the hood, Spotless will:
 
 - parse the raw bytes into a String according to the encoding
 - normalize its line endings to `\n`
 - pass the unix string to each `FormatterStep` one after the other
+- check for idempotence problems, and repeatedly apply the steps until the [result is stable](PADDEDCELL.md). 
 - apply line endings according to the policy
 
 You can also use lower-level methods like `String compute(String unix, File file)` if you'd like to do lower-level processing.
 
 All `FormatterStep` implement `Serializable`, `equals`, and `hashCode`, so build systems that support up-to-date checks can easily and correctly determine if any actions need to be taken.
 
-Spotless also provides `PaddedCell`, which makes it easy to diagnose and correct idempotence problems.
-
 ## Project layout
 
-For the folders below in monospace text, they are published on maven central at the coordinate `com.diffplug.spotless:spotless-${FOLDER_NAME}`.  The other folders are dev infrastructure.
+For the folders below in monospace text, they are published on MavenCentral at the coordinate `com.diffplug.spotless:spotless-${FOLDER_NAME}`.  The other folders are dev infrastructure.
 
 | Folder | Description |
 | ------ | ----------- |
@@ -36,19 +35,19 @@ For the folders below in monospace text, they are published on maven central at 
 | `lib-extra` | Contains the optional parts of Spotless which require external dependencies.  `LineEnding.GIT_ATTRIBUTES` won't work unless `lib-extra` is available. |
 | `plugin-gradle` | Integrates spotless and all of its formatters into Gradle. |
 | `plugin-maven` | Integrates spotless and all of its formatters into Maven. |
-| `_ext` | Folder for generating glue jars (specifically packaging Eclipse jars from p2 for consumption using maven).
 
 ## How to add a new FormatterStep
 
-The easiest way to create a FormatterStep is `FormatterStep createNeverUpToDate(String name, FormatterFunc function)`, which you can use like this:
+The easiest way to create a FormatterStep is to just create `class FooStep implements FormatterStep`. It has one abstract method which is the formatting function, and you're ready to tinker. To work with the build plugins, this class will need to
 
-```java
-FormatterStep identityStep = FormatterStep.createNeverUpToDate("identity", unixStr -> unixStr)
-```
+- implement equality and hashcode
+- support lossless roundtrip serialization
 
-This creates a step which will fail up-to-date checks (it is equal only to itself), and will use the function you passed in to do the formatting pass.
+You can use `StepHarness` (if you don't care about the `File` argument) or `StepHarnessWithFile` to test. The harness will roundtrip serialize your step, check that it's equal to itself, and then perform all tests on the roundtripped step.
 
-To create a step which can handle up-to-date checks properly, use the method `<State extends Serializable> FormatterStep create(String name, State state, Function<State, FormatterFunc> stateToFormatter)`.  Here's an example:
+## Implementing equality in terms of serialization
+
+Spotless has infrastructure which uses the serialized form of your step to implement equality for you. Here is an example:
 
 ```java
 public final class ReplaceStep {
@@ -63,10 +62,10 @@ public final class ReplaceStep {
   private static final class State implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private final CharSequence target;
-    private final CharSequence replacement;
+    private final String target;
+    private final String replacement;
 
-    State(CharSequence target, CharSequence replacement) {
+    State(String target, String replacement) {
       this.target = target;
       this.replacement = replacement;
     }
@@ -83,8 +82,6 @@ The `FormatterStep` created above implements `equals` and `hashCode` based on th
 Oftentimes, a rule's state will be expensive to compute. `EclipseFormatterStep`, for example, depends on a formatting file.  Ideally, we would like to only pay the cost of the I/O needed to load that file if we have to - we'd like to create the FormatterStep now but load its state lazily at the last possible moment.  For this purpose, each of the `FormatterStep.create` methods has a lazy counterpart.  Here are their signatures:
 
 ```java
-FormatterStep createNeverUpToDate    (String name, FormatterFunc function                  )
-FormatterStep createNeverUpToDateLazy(String name, Supplier<FormatterFunc> functionSupplier)
 FormatterStep create    (String name, State state                  , Function<State, FormatterFunc> stateToFormatter)
 FormatterStep createLazy(String name, Supplier<State> stateSupplier, Function<State, FormatterFunc> stateToFormatter)
 ```
@@ -95,9 +92,29 @@ Here's a checklist for creating a new step for Spotless:
 
 - [ ] Class name ends in Step, `SomeNewStep`.
 - [ ] Class has a public static method named `create` that returns a `FormatterStep`.
-- [ ] Has a test class named `SomeNewStepTest`.
+- [ ] Has a test class named `SomeNewStepTest` that uses `StepHarness` or `StepHarnessWithFile` to test the step.
 - [ ] Test class has test methods to verify behavior.
 - [ ] Test class has a test method `equality()` which tests equality using `StepEqualityTester` (see existing methods for examples).
+
+### Serialization roundtrip
+
+In order to support Gradle's configuration cache, all `FormatterStep` must be round-trip serializable. This is a bit tricky because step equality is based on the serialized form of the state, and `transient` can be used to take absolute paths out of the equality check. To make this work, roundtrip compatible steps can actually have *two* states:
+
+- `RoundtripState` which must be roundtrip serializable but has no equality constraints
+  - `FileSignature.Promised` for settings files and `JarState.Promised` for the classpath 
+- `EqualityState` which will never be reserialized and its serialized form is used for equality / hashCode checks
+  - `FileSignature` for settings files and `JarState` for the classpath
+
+```java
+FormatterStep create(String name,
+  RoundtripState roundTrip,
+  SerializedFunction<RoundtripState, EqualityState> equalityFunc,
+  SerializedFunction<EqualityState, FormatterFunc> formatterFunc)
+FormatterStep createLazy(String name,
+  Supplier<RoundtripState> roundTrip,
+  SerializedFunction<RoundtripState, EqualityState> equalityFunc,
+  SerializedFunction<EqualityState, FormatterFunc> formatterFunc)
+```
 
 ### Third-party dependencies via reflection or compile-only source sets
 
@@ -119,23 +136,14 @@ There are many great formatters (prettier, clang-format, black, etc.) which live
 
 Because of Spotless' up-to-date checking and [git ratcheting](https://github.com/diffplug/spotless/tree/main/plugin-gradle#ratchet), Spotless actually doesn't have to call formatters very often, so even an expensive shell call for every single invocation isn't that bad.  Anything that works is better than nothing, and we can always speed things up later if it feels too slow (but it probably won't).
 
-## How to enable the `_ext` projects
+## Lints
 
-The `_ext` projects are disabled per default, since:
+Spotless is primarily a formatter, not a linter. But, if something goes wrong during formatting, it's better to model that as a lint with line numbers rather than just a naked exception. There are two ways to go about this:
 
-* some of the projects perform vast downloads at configuration time
-* the downloaded content may change on server side and break CI builds
+- at any point during the formatting process, you can throw a `Lint.atLine(int line, ...)` exception. This will be caught and turned into a lint.
+- or you can override the `default List<Lint> lint(String content, File file)` method. This method will only run if the step did not already throw an exception.
 
-
-The `_ext` can be activated via the root project property `com.diffplug.spotless.include.ext`.
-
-Activate the property via command line, like for example:
-
-```
-gradlew -Pcom.diffplug.spotless.include.ext=true build
-```
-
-Or set the property in your user `gradle.properties` file, which is especially recommended if you like to work with the `_ext` projects using IDEs.
+Don't go lint crazy! By default, all lints are build failures. Users have to suppress them explicitly if they want to continue.
 
 ## How to add a new plugin for a build system
 
@@ -150,6 +158,37 @@ The gist of it is that you will have to:
 `plugin-gradle` is the canonical example which uses everything that Spotless has to offer.  It's only ~700 lines.
 
 If you get something running, we'd love to host your plugin within this repo as a peer to `plugin-gradle` and `plugin-maven`.
+
+## Run tests
+
+To run all tests, simply do
+
+> gradlew test
+
+Since that takes some time, you might only want to run the tests
+concerning what you are working on:
+
+```shell
+# Run only from test from the "lib" project
+./gradlew :testlib:test --tests com.diffplug.spotless.generic.IndentStepTest
+
+# Run only one test from the "plugin-maven" project
+./gradlew :plugin-maven:test --tests com.diffplug.spotless.maven.pom.SortPomMavenTest
+
+# Run only one test from the "plugin-gradle" project
+./gradlew :plugin-gradle:test --tests com.diffplug.gradle.spotless.FreshMarkExtensionTest
+```
+
+## Check and format code
+
+Before creating a pull request, you might want to format (yes, spotless is  formatted by spotless)
+the code and check for possible bugs
+
+* `./gradlew spotlessApply`
+* `./gradlew spotbugsMain`
+
+These checks are also run by the automated pipeline when you submit a pull request, if
+the pipeline fails, first check if the code is formatted and no bugs were found.
 
 ## Integration testing
 
@@ -207,7 +246,7 @@ If it doesn't work, you can check the JitPack log at `https://jitpack.io/com/git
 
 ### Maven
 
-Run `./gradlew publishToMavenLocal` to publish this to your local repository. The maven plugin is not published to JitPack due to [jitpack/jitpack.io#4112](https://github.com/jitpack/jitpack.io/issues/4112).
+Run `./gradlew publishToMavenLocal` to publish this to your local repository. You can also use the JitPack artifacts, using the same principles as Gradle above.
 
 ## License
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 package com.diffplug.spotless.java;
+
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +44,18 @@ class ImportOrderStepTest extends ResourceHarness {
 	}
 
 	@Test
+	void sortImportsFromArrayWithDuplicateEntries() {
+		FormatterStep step = ImportOrderStep.forJava().createFrom("java|javax", "java", "org|\\#com", "\\#");
+		StepHarness.forStep(step).testResource("java/importsorter/JavaCodeUnsortedImportsSubgroups.test", "java/importsorter/JavaCodeSortedImportsSubgroups.test");
+	}
+
+	@Test
+	void sortImportsFromArrayWithSubgroupsLeadingCatchAll() {
+		FormatterStep step = ImportOrderStep.forJava().createFrom("\\#|");
+		StepHarness.forStep(step).testResource("java/importsorter/JavaCodeUnsortedImportsSubgroups.test", "java/importsorter/JavaCodeSortedImportsSubgroupsLeadingCatchAll.test");
+	}
+
+	@Test
 	void sortImportsFromFile() {
 		FormatterStep step = ImportOrderStep.forJava().createFrom(createTestFile("java/importsorter/import.properties"));
 		StepHarness.forStep(step).testResource("java/importsorter/JavaCodeUnsortedImports.test", "java/importsorter/JavaCodeSortedImports.test");
@@ -55,7 +69,7 @@ class ImportOrderStepTest extends ResourceHarness {
 
 	@Test
 	void sortImportsWildcardsLast() {
-		FormatterStep step = ImportOrderStep.forJava().createFrom(true);
+		FormatterStep step = ImportOrderStep.forJava().createFrom(true, true, null, null);
 		StepHarness.forStep(step).testResource("java/importsorter/JavaCodeUnsortedImports.test", "java/importsorter/JavaCodeSortedImportsWildcardsLast.test");
 	}
 
@@ -81,6 +95,19 @@ class ImportOrderStepTest extends ResourceHarness {
 	void empty() {
 		FormatterStep step = ImportOrderStep.forJava().createFrom(createTestFile("java/importsorter/import.properties"));
 		StepHarness.forStep(step).testResource("java/importsorter/JavaCodeEmptyFile.test", "java/importsorter/JavaCodeEmptyFile.test");
+	}
+
+	@Test
+	void lexicographicSort() {
+		FormatterStep step = ImportOrderStep.forJava().createFrom(false, false, null, null, createTestFile("java/importsorter/import.properties"));
+		StepHarness.forStep(step).testResource("java/importsorter/JavaCodeUnsortedSemanticSort.test", "java/importsorter/JavaCodeSortedLexicographic.test");
+	}
+
+	@Test
+	void semanticSort() {
+		FormatterStep step = ImportOrderStep.forJava().createFrom(false, true, Set.of("com.sun.jna.platform.win32.COM"),
+				Set.of("com.example.b"), createTestFile("java/importsorter/import.properties"));
+		StepHarness.forStep(step).testResource("java/importsorter/JavaCodeUnsortedSemanticSort.test", "java/importsorter/JavaCodeSortedSemanticSort.test");
 	}
 
 	@Test

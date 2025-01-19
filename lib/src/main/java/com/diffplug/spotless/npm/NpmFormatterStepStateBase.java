@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,99 +31,112 @@ import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.diffplug.spotless.FileSignature;
 import com.diffplug.spotless.FormatterFunc;
-
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.diffplug.spotless.ProcessRunner.LongRunningProcess;
+import com.diffplug.spotless.ThrowingEx;
 
 abstract class NpmFormatterStepStateBase implements Serializable {
 
 	private static final Logger logger = LoggerFactory.getLogger(NpmFormatterStepStateBase.class);
 
+	private static final TimedLogger timedLogger = TimedLogger.forLogger(logger);
+
 	private static final long serialVersionUID = 1460749955865959948L;
 
-	@SuppressWarnings("unused")
-	private final FileSignature packageJsonSignature;
-
-	@SuppressFBWarnings("SE_TRANSIENT_FIELD_NOT_RESTORED")
-	public final transient File nodeModulesDir;
-
-	@SuppressFBWarnings("SE_TRANSIENT_FIELD_NOT_RESTORED")
-	private final transient File npmExecutable;
-
-	@SuppressFBWarnings("SE_TRANSIENT_FIELD_NOT_RESTORED")
-	public final transient File projectDir;
-
+	private final String stepName;
 	private final NpmConfig npmConfig;
 
-	private final String stepName;
+	public final NpmFormatterStepLocations locations;
 
-	protected NpmFormatterStepStateBase(String stepName, NpmConfig npmConfig, File projectDir, File buildDir, File npm) throws IOException {
+	protected NpmFormatterStepStateBase(String stepName, NpmConfig npmConfig, NpmFormatterStepLocations locations) throws IOException {
 		this.stepName = requireNonNull(stepName);
 		this.npmConfig = requireNonNull(npmConfig);
-		this.projectDir = requireNonNull(projectDir);
-		this.npmExecutable = npm;
-
-		NodeServerLayout layout = prepareNodeServer(buildDir);
-		this.nodeModulesDir = layout.nodeModulesDir();
-		this.packageJsonSignature = FileSignature.signAsList(layout.packageJsonFile());
+		this.locations = locations;
 	}
 
-	private NodeServerLayout prepareNodeServer(File buildDir) throws IOException {
-		NodeServerLayout layout = new NodeServerLayout(buildDir, stepName);
-		NpmResourceHelper.assertDirectoryExists(layout.nodeModulesDir());
-		NpmResourceHelper.writeUtf8StringToFile(layout.packageJsonFile(),
-				this.npmConfig.getPackageJsonContent());
-		NpmResourceHelper
-				.writeUtf8StringToFile(layout.serveJsFile(), this.npmConfig.getServeScriptContent());
-		if (this.npmConfig.getNpmrcContent() != null) {
-			NpmResourceHelper.writeUtf8StringToFile(layout.npmrcFile(), this.npmConfig.getNpmrcContent());
-		} else {
-			NpmResourceHelper.deleteFileIfExists(layout.npmrcFile());
-		}
-		FormattedPrinter.SYSOUT.print("running npm install");
-		runNpmInstall(layout.nodeModulesDir());
-		FormattedPrinter.SYSOUT.print("npm install finished");
-		return layout;
+	public Runtime toRuntime() {
+		return new Runtime(this);
 	}
 
-	private void runNpmInstall(File npmProjectDir) throws IOException {
-		new NpmProcess(npmProjectDir, this.npmExecutable).install();
+	protected void prepareNodeServerLayout(NodeServerLayout layout) throws IOException {
+
 	}
 
-	protected ServerProcessInfo npmRunServer() throws ServerStartException, IOException {
-		if (!this.nodeModulesDir.exists()) {
-			prepareNodeServer(NodeServerLayout.getBuildDirFromNodeModulesDir(this.nodeModulesDir));
+	public static class Runtime {
+		private final NpmFormatterStepStateBase parent;
+		private final NodeServerLayout nodeServerLayout;
+		private final NodeServeApp nodeServeApp;
+
+		Runtime(NpmFormatterStepStateBase parent) {
+			this.parent = parent;
+			this.nodeServerLayout = new NodeServerLayout(parent.locations.buildDir(), parent.npmConfig.getPackageJsonContent());
+			this.nodeServeApp = new NodeServeApp(nodeServerLayout, parent.npmConfig, parent.locations);
 		}
 
-		try {
-			// The npm process will output the randomly selected port of the http server process to 'server.port' file
-			// so in order to be safe, remove such a file if it exists before starting.
-			final File serverPortFile = new File(this.nodeModulesDir, "server.port");
-			NpmResourceHelper.deleteFileIfExists(serverPortFile);
-			// start the http server in node
-			Process server = new NpmProcess(this.nodeModulesDir, this.npmExecutable).start();
+		public NodeServerLayout nodeServerLayout() {
+			return nodeServerLayout;
+		}
 
-			// await the readiness of the http server - wait for at most 60 seconds
-			try {
-				NpmResourceHelper.awaitReadableFile(serverPortFile, Duration.ofSeconds(60));
-			} catch (TimeoutException timeoutException) {
-				// forcibly end the server process
-				try {
-					if (server.isAlive()) {
-						server.destroyForcibly();
-						server.waitFor();
-					}
-				} catch (Throwable t) {
-					// ignore
-				}
-				throw timeoutException;
+		protected void prepareNodeServerLayout() throws IOException {
+			nodeServeApp.prepareNodeAppLayout();
+			parent.prepareNodeServerLayout(nodeServerLayout);
+		}
+
+		protected void prepareNodeServer() throws IOException {
+			nodeServeApp.npmInstall();
+		}
+
+		protected void assertNodeServerDirReady() throws IOException {
+			if (needsPrepareNodeServerLayout()) {
+				// reinstall if missing
+				prepareNodeServerLayout();
 			}
-			// read the server.port file for resulting port and remember the port for later formatting calls
-			String serverPort = NpmResourceHelper.readUtf8StringFromFile(serverPortFile).trim();
-			return new ServerProcessInfo(server, serverPort, serverPortFile);
-		} catch (IOException | TimeoutException e) {
-			throw new ServerStartException(e);
+			if (needsPrepareNodeServer()) {
+				// run npm install if node_modules is missing
+				prepareNodeServer();
+			}
+		}
+
+		protected boolean needsPrepareNodeServer() {
+			return nodeServeApp.needsNpmInstall();
+		}
+
+		protected boolean needsPrepareNodeServerLayout() {
+			return nodeServeApp.needsPrepareNodeAppLayout();
+		}
+
+		protected ServerProcessInfo npmRunServer() throws ServerStartException, IOException {
+			assertNodeServerDirReady();
+			LongRunningProcess server = null;
+			try {
+				// The npm process will output the randomly selected port of the http server process to 'server.port' file
+				// so in order to be safe, remove such a file if it exists before starting.
+				final File serverPortFile = new File(this.nodeServerLayout.nodeModulesDir(), "server.port");
+				NpmResourceHelper.deleteFileIfExists(serverPortFile);
+				// start the http server in node
+				server = nodeServeApp.startNpmServeProcess();
+
+				// await the readiness of the http server - wait for at most 60 seconds
+				try {
+					NpmResourceHelper.awaitReadableFile(serverPortFile, Duration.ofSeconds(60));
+				} catch (TimeoutException timeoutException) {
+					// forcibly end the server process
+					try {
+						if (server.isAlive()) {
+							server.destroyForcibly();
+							server.waitFor();
+						}
+					} catch (Throwable t) {
+						// ignore
+					}
+					throw timeoutException;
+				}
+				// read the server.port file for resulting port and remember the port for later formatting calls
+				String serverPort = NpmResourceHelper.readUtf8StringFromFile(serverPortFile).trim();
+				return new ServerProcessInfo(server, serverPort, serverPortFile);
+			} catch (IOException | TimeoutException e) {
+				throw new ServerStartException("Starting server failed." + (server != null ? "\n\nProcess result:\n" + ThrowingEx.get(server::result) : ""), e);
+			}
 		}
 	}
 
@@ -192,8 +205,8 @@ abstract class NpmFormatterStepStateBase implements Serializable {
 	protected static class ServerStartException extends RuntimeException {
 		private static final long serialVersionUID = -8803977379866483002L;
 
-		public ServerStartException(Throwable cause) {
-			super(cause);
+		public ServerStartException(String message, Throwable cause) {
+			super(message, cause);
 		}
 	}
 }

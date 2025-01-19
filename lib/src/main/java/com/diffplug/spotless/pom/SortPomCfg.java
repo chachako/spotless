@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 DiffPlug
+ * Copyright 2021-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ import java.io.Serializable;
 public class SortPomCfg implements Serializable {
 	private static final long serialVersionUID = 1L;
 
+	public String version = "4.0.0";
+
 	public String encoding = "UTF-8";
 
 	public String lineSeparator = System.getProperty("line.separator");
@@ -31,17 +33,25 @@ public class SortPomCfg implements Serializable {
 
 	public boolean keepBlankLines = true;
 
+	public boolean endWithNewline = true;
+
 	public int nrOfIndentSpace = 2;
 
 	public boolean indentBlankLines = false;
 
 	public boolean indentSchemaLocation = false;
 
+	public String indentAttribute = null;
+
 	public String predefinedSortOrder = "recommended_2008_06";
+
+	public boolean quiet = false;
 
 	public String sortOrderFile = null;
 
 	public String sortDependencies = null;
+
+	public String sortDependencyManagement = null;
 
 	public String sortDependencyExclusions = null;
 

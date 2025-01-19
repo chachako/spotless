@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2023 DiffPlug
+ * Copyright 2016-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -42,7 +43,7 @@ import com.diffplug.spotless.ResourceHarness;
 
 public class GradleIntegrationHarness extends ResourceHarness {
 	public enum GradleVersionSupport {
-		JRE_11("5.0"), MINIMUM(SpotlessPlugin.MINIMUM_GRADLE),
+		JRE_11("5.0"), MINIMUM(SpotlessPlugin.VER_GRADLE_min), CUSTOM_STEPS(SpotlessPlugin.VER_GRADLE_minVersionForCustom),
 		// technically, this API exists in 6.5, but the flags for it change in 6.6, so we build to that
 		CONFIGURATION_CACHE("6.6"),
 		// https://docs.gradle.org/7.5/userguide/configuration_cache.html#config_cache:stable
@@ -53,9 +54,20 @@ public class GradleIntegrationHarness extends ResourceHarness {
 		GradleVersionSupport(String version) {
 			String minVersionForRunningJRE;
 			switch (Jvm.version()) {
-			case 21:
-			case 20:
+			case 24:
 				// TODO: https://docs.gradle.org/current/userguide/compatibility.html
+			case 23:
+				minVersionForRunningJRE = "8.10";
+				break;
+			case 22:
+				minVersionForRunningJRE = "8.8";
+				break;
+			case 21:
+				minVersionForRunningJRE = "8.5";
+				break;
+			case 20:
+				minVersionForRunningJRE = "8.3";
+				break;
 			case 19:
 				minVersionForRunningJRE = "7.6";
 				break;
@@ -93,12 +105,12 @@ public class GradleIntegrationHarness extends ResourceHarness {
 	/**
 	 * Each test gets its own temp folder, and we create a gradle
 	 * build there and run it.
-	 *
+	 * <p>
 	 * Because those test folders don't have a .gitattributes file,
 	 * git (on windows) will default to \r\n. So now if you read a
 	 * test file from the spotless test resources, and compare it
 	 * to a build result, the line endings won't match.
-	 *
+	 * <p>
 	 * By sticking this .gitattributes file into the test directory,
 	 * we ensure that the default Spotless line endings policy of
 	 * GIT_ATTRIBUTES will use \n, so that tests match the test
@@ -109,19 +121,49 @@ public class GradleIntegrationHarness extends ResourceHarness {
 		setFile(".gitattributes").toContent("* text eol=lf");
 	}
 
-	protected GradleRunner gradleRunner() throws IOException {
+	public GradleRunner gradleRunner() throws IOException {
+		GradleVersionSupport version;
+		if (newFile("build.gradle").exists() && read("build.gradle").contains("custom")) {
+			version = GradleVersionSupport.CUSTOM_STEPS;
+		} else {
+			version = GradleVersionSupport.MINIMUM;
+		}
 		return GradleRunner.create()
-				.withGradleVersion(GradleVersionSupport.MINIMUM.version)
+				.withGradleVersion(version.version)
 				.withProjectDir(rootFolder())
+				.withTestKitDir(getTestKitDir())
 				.withPluginClasspath();
 	}
 
 	/** Dumps the complete file contents of the folder to the console. */
-	protected String getContents() throws IOException {
+	public String getContents() {
 		return getContents(subPath -> !subPath.startsWith(".gradle"));
 	}
 
-	protected String getContents(Predicate<String> subpathsToInclude) throws IOException {
+	public String getContents(Predicate<String> subpathsToInclude) {
+		return StringPrinter.buildString(printer -> Errors.rethrow().run(() -> iterateFiles(subpathsToInclude, (subpath, file) -> {
+			printer.println("### " + subpath + " ###");
+			try {
+				printer.println(read(subpath));
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		})));
+	}
+
+	/** Dumps the filtered file listing of the folder to the console. */
+	public String listFiles(Predicate<String> subpathsToInclude) {
+		return StringPrinter.buildString(printer -> iterateFiles(subpathsToInclude, (subPath, file) -> {
+			printer.println(subPath + " [" + getFileAttributes(file) + "]");
+		}));
+	}
+
+	/** Dumps the file listing of the folder to the console. */
+	public String listFiles() {
+		return listFiles(subPath -> !subPath.startsWith(".gradle"));
+	}
+
+	public void iterateFiles(Predicate<String> subpathsToInclude, BiConsumer<String, File> consumer) {
 		TreeDef<File> treeDef = TreeDef.forFile(Errors.rethrow());
 		List<File> files = TreeStream.depthFirst(treeDef, rootFolder())
 				.filter(File::isFile)
@@ -129,28 +171,29 @@ public class GradleIntegrationHarness extends ResourceHarness {
 
 		ListIterator<File> iterator = files.listIterator(files.size());
 		int rootLength = rootFolder().getAbsolutePath().length() + 1;
-		return StringPrinter.buildString(printer -> Errors.rethrow().run(() -> {
-			while (iterator.hasPrevious()) {
-				File file = iterator.previous();
-				String subPath = file.getAbsolutePath().substring(rootLength);
-				if (subpathsToInclude.test(subPath)) {
-					printer.println("### " + subPath + " ###");
-					printer.println(read(subPath));
-				}
+		while (iterator.hasPrevious()) {
+			File file = iterator.previous();
+			String subPath = file.getAbsolutePath().substring(rootLength);
+			if (subpathsToInclude.test(subPath)) {
+				consumer.accept(subPath, file);
 			}
-		}));
+		}
 	}
 
-	protected void checkRunsThenUpToDate() throws IOException {
+	public String getFileAttributes(File file) {
+		return (file.canRead() ? "r" : "-") + (file.canWrite() ? "w" : "-") + (file.canExecute() ? "x" : "-");
+	}
+
+	public void checkRunsThenUpToDate() throws IOException {
 		checkIsUpToDate(false);
 		checkIsUpToDate(true);
 	}
 
-	protected void applyIsUpToDate(boolean upToDate) throws IOException {
+	public void applyIsUpToDate(boolean upToDate) throws IOException {
 		taskIsUpToDate("spotlessApply", upToDate);
 	}
 
-	protected void checkIsUpToDate(boolean upToDate) throws IOException {
+	public void checkIsUpToDate(boolean upToDate) throws IOException {
 		taskIsUpToDate("spotlessCheck", upToDate);
 	}
 
@@ -172,13 +215,13 @@ public class GradleIntegrationHarness extends ResourceHarness {
 		}
 	}
 
-	protected static List<String> outcomes(BuildResult build, TaskOutcome outcome) {
+	public static List<String> outcomes(BuildResult build, TaskOutcome outcome) {
 		return build.taskPaths(outcome).stream()
 				.filter(s -> !s.equals(":spotlessInternalRegisterDependencies"))
 				.collect(Collectors.toList());
 	}
 
-	protected static List<BuildTask> outcomes(BuildResult build) {
+	public static List<BuildTask> outcomes(BuildResult build) {
 		return build.getTasks().stream()
 				.filter(t -> !t.getPath().equals(":spotlessInternalRegisterDependencies"))
 				.collect(Collectors.toList());
@@ -190,5 +233,13 @@ public class GradleIntegrationHarness extends ResourceHarness {
 				printer.println(task.getPath() + " " + task.getOutcome());
 			}
 		});
+	}
+
+	private static File getTestKitDir() {
+		String gradleUserHome = System.getenv("GRADLE_USER_HOME");
+		if (gradleUserHome == null || gradleUserHome.isEmpty()) {
+			gradleUserHome = new File(System.getProperty("user.home"), ".gradle").getAbsolutePath();
+		}
+		return new File(gradleUserHome, "testkit");
 	}
 }

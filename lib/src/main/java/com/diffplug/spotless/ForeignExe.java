@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 DiffPlug
+ * Copyright 2020-2024 DiffPlug
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.diffplug.spotless;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.nio.charset.Charset;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -27,11 +28,12 @@ import javax.annotation.Nullable;
  * Finds a foreign executable and checks its version.
  * If either part of that fails, it shows you why
  * and helps you fix it.
- *
+ * <p>
  * Usage: {@code ForeignExe.nameAndVersion("grep", "2.5.7").confirmVersionAndGetAbsolutePath()}
  * will find grep, confirm that it is version 2.5.7, and then return.
  */
-public class ForeignExe {
+public class ForeignExe implements Serializable {
+	private static final long serialVersionUID = 1L;
 	private @Nullable String pathToExe;
 	private String versionFlag = "--version";
 	private Pattern versionRegex = Pattern.compile("version (\\S*)");
